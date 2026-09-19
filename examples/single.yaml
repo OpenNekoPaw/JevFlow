@@ -1,0 +1,14 @@
+version: 1
+name: single-triage
+mode: single
+state: {$ref: input}
+questions:
+  intent:
+    type: choice
+    instructions: Which department best matches the customer's message?
+    criteria:
+      billing: Charges, invoices, duplicate payments, or refunds.
+      technical: Login problems, bugs, or service failures.
+      other: Neither department fits, or information is insufficient.
+result:
+  route: {$ref: nodes.evaluate.intent.choice}

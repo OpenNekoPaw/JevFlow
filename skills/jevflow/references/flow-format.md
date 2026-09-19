@@ -78,3 +78,21 @@ Mock file: mapping from evaluate node ID to that node's answers (without the top
 Test cases are a JSON array of objects with `name`, `input`, `expected`, and (for offline execution) `mock`. Expected output is compared to the complete returned value. CLI `test --live` ignores mock data; only `input` and selected YAML state enter model requests. Live test runs stop on execution/API error; wrong but valid results are scored and remaining cases continue.
 
 Traces include `mode`, the full flow definition/hash, input, steps, model responses, timings and result or error. Logs from mock mode describe orchestration, not model quality. `Flow.update` changes memory only; saving a candidate YAML and calling `reload` is a separate host operation.
+
+## Single-call shorthand
+
+Use `mode: single`, `version: 1`, `name`, `state` and `questions` instead of `start` and `nodes`. Optional `revision` and `limits` work as in a flow. Optional `result` is a return-value template; answers are referenced as `nodes.evaluate.<question>.<field>`. Without `result`, all typed answers are returned. This compiles to the standard `evaluate` and `result` nodes, so mocks use the node ID `evaluate`. A single call may contain multiple independent questions.
+
+```yaml
+version: 1
+name: sentiment
+mode: single
+state: {$ref: input}
+questions:
+  positive:
+    type: noul
+    instructions: Does this message express a positive sentiment?
+result: {$ref: nodes.evaluate.positive.noul}
+```
+
+`mode: flow` is optional on the full node-based format. `validate_flow()` and `load_flow()` return the canonical node graph; `Flow.definition` exposes that graph. Single is a configuration convenience, not a second runtime.

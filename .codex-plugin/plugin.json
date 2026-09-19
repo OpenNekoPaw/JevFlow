@@ -1,0 +1,18 @@
+{
+  "name": "jevflow",
+  "version": "0.1.0+codex.20260919082242",
+  "description": "Lightweight YAML single judgments and decision flows for Jev.",
+  "author": {
+    "name": "Local developer"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "jevflow",
+    "shortDescription": "\u7f16\u6392\u548c\u6267\u884c\u8f7b\u91cf Jev \u51b3\u7b56\u6d41\u7a0b",
+    "longDescription": "Agent edits YAML policies; the bundled Python runtime validates, snapshots and executes typed Jev decisions. Hosts own data preparation, scheduling and actions.",
+    "developerName": "Local developer",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Use jevflow to inspect or create a YAML decision policy, validate it and test its routes."
+  }
+}

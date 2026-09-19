@@ -26,7 +26,7 @@ class Flow:
 
     def update(self, definition):
         candidate = copy.deepcopy(definition)
-        validate_flow(candidate)
+        candidate = validate_flow(candidate)
         with self._lock:
             self._definition = candidate
 

@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 from contextlib import redirect_stdout
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import yaml
@@ -37,6 +38,25 @@ class FlowTests(unittest.TestCase):
                 self.assertEqual(trace["status"], "completed")
                 self.assertEqual(trace["mode"], "mock")
                 self.assertIn("flowHash", trace)
+
+    def test_single_uses_shared_runtime_and_update(self):
+        single = yaml.safe_load((ROOT / "examples/single.yaml").read_text())
+        original = copy.deepcopy(single)
+        mock = json.loads((ROOT / "examples/single-mock.json").read_text())
+        trace = {}
+        self.assertEqual(run_flow(single, self.inputs, MockClient(mock), trace), {"route": "billing"})
+        self.assertEqual(trace["calls"], 1)
+        self.assertEqual([s["type"] for s in trace["steps"]], ["evaluate", "return"])
+        self.assertEqual(single, original)
+        flow = Flow(self.flow)
+        flow.update(single)
+        self.assertEqual(flow.run(self.inputs, MockClient(mock)), {"route": "billing"})
+        del single["result"]
+        self.assertEqual(Flow(single).run(self.inputs, MockClient(mock)), mock["evaluate"])
+        single["mode"] = "typo"
+        with self.assertRaisesRegex(FlowError, "mode"):
+            flow.update(single)
+        self.assertEqual(flow.run(self.inputs, MockClient(mock)), {"route": "billing"})
 
     def test_batch_and_dependent_state(self):
         trace = {}
@@ -208,6 +228,26 @@ class FlowTests(unittest.TestCase):
                 code = main(["test", str(ROOT / "examples/triage.yaml"), str(ROOT / "examples/cases.json"),
                              "--trace-dir", str(Path(tmp) / "cases")])
             self.assertEqual(code, 0)
+
+    def test_concurrent_shared_flow_keeps_run_state_isolated(self):
+        barrier = threading.Barrier(4)
+        flow = Flow({"version": 1, "name": "concurrent", "start": "judge", "nodes": {
+            "judge": {"type": "evaluate", "state": {"$ref": "input"}, "questions": {
+                "ready": {"type": "noul", "instructions": "Is the item ready?"}}, "next": "done"},
+            "done": {"type": "return", "value": {"id": {"$ref": "input.id"},
+                "answer": {"$ref": "nodes.judge.ready.noul"}}}}})
+
+        class ConcurrentClient:
+            mode = "mock"
+
+            def evaluate(self, state, **kwargs):
+                barrier.wait(timeout=3)
+                return {"answers": {"ready": {"type": "noul", "noul": state["probability"]}}}
+
+        inputs = [{"id": i, "probability": (i + 1) / 10} for i in range(4)]
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(lambda item: flow.run(item, ConcurrentClient()), inputs))
+        self.assertEqual(results, [{"id": i, "answer": (i + 1) / 10} for i in range(4)])
 
 
 if __name__ == "__main__":

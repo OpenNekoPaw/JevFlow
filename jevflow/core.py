@@ -64,8 +64,7 @@ def load_flow(path):
         flow = yaml.load(Path(path).read_text(encoding="utf-8"), Loader=UniqueLoader)
     except yaml.YAMLError as exc:
         raise FlowError("Invalid YAML: " + str(exc)) from exc
-    validate_flow(flow)
-    return flow
+    return validate_flow(flow)
 
 
 def validate_questions(questions):
@@ -104,6 +103,20 @@ def references(value):
 
 def validate_flow(flow):
     json_value(flow)
+    require(isinstance(flow, dict), "flow must be a mapping")
+    mode = flow.get("mode", "flow")
+    require(mode in ("single", "flow"), "mode must be single or flow")
+    if mode == "single":
+        fields(flow, {"version", "name", "mode", "state", "questions"}, {"revision", "limits", "result"}, "single")
+        validate_questions(flow["questions"])
+        flow = {**{k: flow[k] for k in ("version", "name", "revision", "limits") if k in flow},
+                "start": "evaluate", "nodes": {
+                    "evaluate": {"type": "evaluate", "state": flow["state"],
+                                 "questions": flow["questions"], "next": "result"},
+                    "result": {"type": "return", "value": flow.get("result", {
+                        key: {"$ref": "nodes.evaluate." + key} for key in flow["questions"]})}}}
+    elif "mode" in flow:
+        flow = {k: v for k, v in flow.items() if k != "mode"}
     fields(flow, {"version", "name", "start", "nodes"}, {"revision", "limits"}, "flow")
     require(type(flow["version"]) is int and flow["version"] == 1, "version must be 1")
     require(isinstance(flow["name"], str) and bool(flow["name"].strip()), "name must be text")
@@ -248,8 +261,7 @@ def validate_answers(questions, answers):
 
 def run_flow(flow, inputs, client, trace=None):
     """Execute one immutable flow snapshot using a duck-typed Jev client."""
-    flow = copy.deepcopy(flow)
-    validate_flow(flow)
+    flow = validate_flow(copy.deepcopy(flow))
     json_value(inputs)
     trace = trace if trace is not None else {}
     started = time.monotonic()
