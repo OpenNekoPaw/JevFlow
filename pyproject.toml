@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jevflow"
+version = "0.1.0"
+description = "Lightweight YAML decision flows for Jev and AI agents"
+requires-python = ">=3.9"
+dependencies = ["PyYAML>=6.0,<7"]
+readme = "README.md"
+
+[project.scripts]
+jevflow = "jevflow.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["jevflow*"]

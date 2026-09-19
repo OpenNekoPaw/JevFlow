@@ -1,0 +1,9 @@
+{
+  "classify": {
+    "intent": {"type": "choice", "choice": "billing", "probabilities": {"billing": 0.95, "technical": 0.03, "other": 0.02}, "confidence": 0.9},
+    "urgent": {"type": "noul", "noul": 0.1}
+  },
+  "assess_billing": {
+    "specificity": {"type": "score", "score": 1.9, "probabilities": {"0": 0, "1": 0.1, "2": 0.9}, "confidence": 0.8}
+  }
+}

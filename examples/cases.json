@@ -1,0 +1,161 @@
+[
+  {
+    "name": "billing-detail",
+    "input": {
+      "message": "I was charged twice for the same order."
+    },
+    "expected": {
+      "route": "billing"
+    },
+    "mock": {
+      "classify": {
+        "intent": {
+          "type": "choice",
+          "choice": "billing",
+          "probabilities": {
+            "billing": 0.95,
+            "technical": 0.03,
+            "other": 0.02
+          },
+          "confidence": 0.9
+        },
+        "urgent": {
+          "type": "noul",
+          "noul": 0.1
+        }
+      },
+      "assess_billing": {
+        "specificity": {
+          "type": "score",
+          "score": 1.9,
+          "probabilities": {
+            "0": 0,
+            "1": 0.1,
+            "2": 0.9
+          },
+          "confidence": 0.8
+        }
+      }
+    }
+  },
+  {
+    "name": "billing-unclear",
+    "input": {
+      "message": "I have a question about billing."
+    },
+    "expected": {
+      "route": "agent_review"
+    },
+    "mock": {
+      "classify": {
+        "intent": {
+          "type": "choice",
+          "choice": "billing",
+          "probabilities": {
+            "billing": 0.95,
+            "technical": 0.03,
+            "other": 0.02
+          },
+          "confidence": 0.9
+        },
+        "urgent": {
+          "type": "noul",
+          "noul": 0.1
+        }
+      },
+      "assess_billing": {
+        "specificity": {
+          "type": "score",
+          "score": 1.0,
+          "probabilities": {
+            "0": 0.1,
+            "1": 0.8,
+            "2": 0.1
+          },
+          "confidence": 0.8
+        }
+      }
+    }
+  },
+  {
+    "name": "technical",
+    "input": {
+      "message": "The profile page avatar does not load."
+    },
+    "expected": {
+      "route": "technical"
+    },
+    "mock": {
+      "classify": {
+        "intent": {
+          "type": "choice",
+          "choice": "technical",
+          "probabilities": {
+            "billing": 0.02,
+            "technical": 0.96,
+            "other": 0.02
+          },
+          "confidence": 0.9
+        },
+        "urgent": {
+          "type": "noul",
+          "noul": 0.1
+        }
+      }
+    }
+  },
+  {
+    "name": "urgent-short-circuit",
+    "input": {
+      "message": "Payments are failing right now; our business cannot operate."
+    },
+    "expected": {
+      "route": "agent_review"
+    },
+    "mock": {
+      "classify": {
+        "intent": {
+          "type": "choice",
+          "choice": "billing",
+          "probabilities": {
+            "billing": 0.95,
+            "technical": 0.03,
+            "other": 0.02
+          },
+          "confidence": 0.9
+        },
+        "urgent": {
+          "type": "noul",
+          "noul": 0.95
+        }
+      }
+    }
+  },
+  {
+    "name": "out-of-scope",
+    "input": {
+      "message": "Tell me a joke."
+    },
+    "expected": {
+      "route": "agent_review"
+    },
+    "mock": {
+      "classify": {
+        "intent": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "billing": 0.02,
+            "technical": 0.02,
+            "other": 0.96
+          },
+          "confidence": 0.9
+        },
+        "urgent": {
+          "type": "noul",
+          "noul": 0.1
+        }
+      }
+    }
+  }
+]

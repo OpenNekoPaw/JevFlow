@@ -1,0 +1,72 @@
+version: 1
+name: support-triage
+revision: "1"
+start: classify
+limits:
+  max_steps: 12
+  max_calls: 2
+  timeout_seconds: 60
+nodes:
+  classify:
+    type: evaluate
+    state:
+      message: {$ref: input.message}
+    questions:
+      intent:
+        type: choice
+        instructions: Which department best matches the customer's message?
+        criteria:
+          billing: Charges, invoices, duplicate payments, or refunds.
+          technical: Login problems, bugs, or service failures.
+          other: Neither department fits, or information is insufficient.
+      urgent:
+        type: noul
+        instructions: Does the message describe an immediate service outage or a time-critical need?
+    next: route
+  route:
+    type: branch
+    cases:
+      - left: {$ref: nodes.classify.urgent.noul}
+        op: gte
+        right: 0.8 # Illustrative threshold; validate against actual outcomes.
+        next: review
+      - left: {$ref: nodes.classify.intent.choice}
+        op: eq
+        right: other
+        next: review
+      - left: {$ref: nodes.classify.intent.choice}
+        op: eq
+        right: billing
+        next: assess_billing
+    default: technical
+  assess_billing:
+    type: evaluate
+    state:
+      message: {$ref: input.message}
+      prior_intent: {$ref: nodes.classify.intent.choice}
+    questions:
+      specificity:
+        type: score
+        instructions: How specifically does this message describe the billing problem?
+        criteria:
+          - No billing problem is identifiable.
+          - A billing concern is stated, but the issue is unclear.
+          - A concrete billing issue is identified, such as a duplicate charge.
+    next: billing_route
+  billing_route:
+    type: branch
+    cases:
+      - left: {$ref: nodes.assess_billing.specificity.score}
+        op: gte
+        right: 1.5
+        next: billing
+    default: review
+  billing:
+    type: return
+    value: {route: billing}
+  technical:
+    type: return
+    value: {route: technical}
+  review:
+    type: return
+    value: {route: agent_review}
