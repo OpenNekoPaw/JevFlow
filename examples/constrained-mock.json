@@ -1,0 +1,1 @@
+{"select":{"action":{"type":"choice","choice":"fast","probabilities":{"fast":0.8,"standard":0.2}}}}

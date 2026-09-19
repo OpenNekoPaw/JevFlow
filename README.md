@@ -1,9 +1,11 @@
 # jevflow
 
+[English](README.en.md) · [配置规范](skills/jevflow/references/flow-format.md)
+
 供 Agent 或应用嵌入的轻量决策插件。Agent 理解场景并提供 YAML 与输入数据，jevflow 负责数据流转、Jev 判断和分支执行，返回结构化结果与执行记录。
 
-- 纯 Python Jev HTTP 客户端，无 Node.js 或 Agent 框架依赖。
-- 三种节点：`evaluate`、`branch`、`return`。
+- 纯 Python Jev HTTP 客户端，无 Agent 框架依赖；可选 Gateway 适配器另需 Node.js。
+- 四种节点：`filter`、`evaluate`、`branch`、`return`；离线 HTML / Mermaid 可视化。
 - 一个 `evaluate` 可以批量询问多个独立问题：`choice`、`noul`、`score`。
 - YAML 校验、运行快照、动态更新、JSON 日志和离线回归。
 - Python API、JSON 输出 CLI，以及通用 Agent Skill。
@@ -80,7 +82,7 @@ print(response["answers"]["refund"]["noul"])
 
 客户端是同步的。异步 Agent 可使用 `asyncio.to_thread(flow.run, inputs, client)` 包装；框架工具可以直接封装 `Flow.run`。
 
-宿主可以并发运行多个 Flow；每次执行有独立输入、节点状态和配置快照，各执行应使用独立客户端和 trace。共享 Flow 的配置更新影响后续执行，不改变已启动的执行。若不同请求需要不同候选集，应先构建各自的配置快照，再并发执行，避免“修改共享配置后才排队运行”导致请求绑定到错误版本。
+宿主可以并发运行多个 Flow；每次执行有独立输入、节点状态和配置快照，各执行应使用独立客户端和 trace。共享 Flow 的配置更新影响后续执行，不改变已启动的执行。动态候选通过输入传入，问题使用 `criteria: {$ref: input.criteria}` 或引用上游筛选结果；无需逐次修改共享配置。
 
 一个 `evaluate` 内的独立问题由 Jev 批量处理；YAML 节点仍按顺序运行，MVP 没有并行分支/汇合节点。线程池、并发数和任务队列由宿主提供。
 
@@ -113,7 +115,7 @@ trace 包含配置快照、内容 hash、输入、逐节点请求/回答、分�
 
 ## MVP 边界
 
-仅执行决策与返回数据；实际发消息、支付、操作游戏等动作由宿主处理。没有 Web UI、数据库、调度服务或自动优化 Agent。支持顺序、分支、合流和有预算的循环；同节点多问题由 Jev 批量判断，不同节点按顺序执行。候选与问题写在 YAML 中，MVP 不从输入动态生成候选；需要每次变化时，由宿主生成配置后调用 `Flow.update()` 或创建独立的 `Flow`。
+仅执行决策与返回数据；实际发消息、支付、操作游戏等动作由宿主处理。提供只读离线图形预览，没有图形编辑器、数据库、调度服务或自动优化 Agent。支持顺序、分支、合流和有预算的循环；同节点多问题由 Jev 批量判断，不同节点按顺序执行。问题和约束写在 YAML 中，候选可从输入动态引用。`filter` 输出 `items`、`criteria`、`count`；空集由显式分支处理，唯一候选直接返回 typed answer，不消耗模型调用。
 
 默认最多 32 步、8 次模型调用、60 秒流程预算，可在 YAML `limits` 修改。HTTP 超时约束连接/读取等待，执行器在节点边界检查流程总耗时；不是可强杀任意用户函数的硬实时调度器。
 
@@ -140,3 +142,35 @@ python3 scripts/jevflow.py run examples/single.yaml --input examples/input.json 
 仓库包含 `.codex-plugin/plugin.json` 和 `skills/jevflow`，可作为个人 marketplace 插件安装。安装后的 Skill 通过 `<plugin-root>/scripts/jevflow.py` 调用缓存中自带的 Python 代码；运行需要 Python 3.9+ 和 PyYAML。输入、输出、虚拟环境和场景适配器由宿主保存。插件缓存不保存运行状态。
 
 为避免本地 `.venv`、`.git` 和 trace 被复制进插件缓存，先用 `scripts/export-plugin.py` 导出干净的插件目录，再让个人 marketplace 指向导出目录。导出目录仍应命名为 `jevflow`。
+
+## 候选约束与可视化
+
+Flow 的收益来自改变证据、允许的选择或分支。不要先问一次战术分类，再把原来的全量候选交给模型重复选择。用 `filter` 按宿主提供的事实筛选候选；下游 `evaluate.questions.*.criteria` 引用 `nodes.<filter>.criteria`。模型响应不得包含被排除的 ID。语义分析也可先用 Jev 判断，再以该答案作为过滤条件，但必须实际影响后续执行。
+
+```sh
+python3 scripts/jevflow.py run examples/constrained.yaml --input examples/constrained-input.json --mock examples/constrained-mock.json --trace .tmp/constrained.json
+python3 scripts/jevflow.py visualize examples/constrained.yaml --trace .tmp/constrained.json --output .tmp/constrained.html
+python3 scripts/jevflow.py visualize examples/constrained.yaml --format mermaid --output .tmp/constrained.mmd
+```
+
+HTML 无外部依赖，点击节点查看条件、提示词与执行记录，支持缩放和路径高亮。预览是只读的；Agent 编辑 YAML 后重新生成。附带 trace 的 HTML 会包含节点请求和输入证据，按原始 trace 的权限保存。
+
+## 语言约定
+
+本项目策略、模型提示、示例说明和默认图形界面使用中文；YAML 字段名、节点 ID、API 枚举保持英文。`title` 是显示名，`locale: zh-CN` 控制图形界面，也可用 `--locale en` 生成英文界面，不会自动翻译策略正文。中文和英文文档使用相同接口与版本。
+
+## 可选 AI Gateway 客户端
+
+该客户端与原生 HTTP 客户端属于同一个 jevflow 插件，宿主无需维护第二套 Jev 调用代码。原生客户端仍只依赖 Python；Gateway SDK 安装到宿主目录，不写入插件缓存。
+
+```sh
+npm install --prefix "$HOME/.local/share/jevflow/ai-gateway" --save-exact ai@7.0.106
+```
+
+```python
+from jevflow import Flow, GatewayClient
+flow = Flow.from_file("flow.yaml")
+result = flow.run(inputs, GatewayClient(max_retries=2), trace={})
+```
+
+需要进程环境中的 `AI_GATEWAY_API_KEY`。`JEVFLOW_GATEWAY_HOME` 可覆盖 SDK 目录。默认不重试；显式设置 `max_retries` 后，仅对临时上游故障有界重试，所有尝试共用剩余时间并记录 `transportAttempts`。不会切换模型或回退 mock。传输失败与策略错误分别评估。

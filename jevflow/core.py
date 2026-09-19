@@ -1,4 +1,4 @@
-"""Three node types: evaluate, branch, return. No expression evaluation."""
+"""Four node types: filter, evaluate, branch, return. No expression evaluation."""
 
 import copy
 import hashlib
@@ -67,7 +67,7 @@ def load_flow(path):
     return validate_flow(flow)
 
 
-def validate_questions(questions):
+def validate_questions(questions, dynamic=False, singleton=False):
     require(isinstance(questions, dict) and bool(questions), "questions must be a nonempty mapping")
     for name, question in questions.items():
         require(isinstance(name, str) and bool(NAME.fullmatch(name)), "Invalid question ID")
@@ -77,7 +77,11 @@ def validate_questions(questions):
         require(isinstance(question["instructions"], str) and bool(question["instructions"].strip()), "instructions must be nonempty text")
         criteria = question.get("criteria")
         if kind == "choice":
-            require(isinstance(criteria, dict) and 2 <= len(criteria) <= 255, "choice needs 2..255 options")
+            if dynamic and isinstance(criteria, dict) and "$ref" in criteria:
+                list(references(criteria))
+                continue
+            require(isinstance(criteria, dict) and (1 if singleton else 2) <= len(criteria) <= 255,
+                    "choice needs " + ("1" if singleton else "2") + "..255 options")
             require(all(isinstance(k, str) and k and isinstance(v, str) and v.strip() for k, v in criteria.items()), "choice options need string IDs and descriptions")
         elif kind == "score":
             require(isinstance(criteria, list) and len(criteria) >= 2, "score needs at least two ordered levels")
@@ -107,9 +111,9 @@ def validate_flow(flow):
     mode = flow.get("mode", "flow")
     require(mode in ("single", "flow"), "mode must be single or flow")
     if mode == "single":
-        fields(flow, {"version", "name", "mode", "state", "questions"}, {"revision", "limits", "result"}, "single")
-        validate_questions(flow["questions"])
-        flow = {**{k: flow[k] for k in ("version", "name", "revision", "limits") if k in flow},
+        fields(flow, {"version", "name", "mode", "state", "questions"}, {"revision", "limits", "result", "title", "locale"}, "single")
+        validate_questions(flow["questions"], dynamic=True, singleton=True)
+        flow = {**{k: flow[k] for k in ("version", "name", "revision", "limits", "title", "locale") if k in flow},
                 "start": "evaluate", "nodes": {
                     "evaluate": {"type": "evaluate", "state": flow["state"],
                                  "questions": flow["questions"], "next": "result"},
@@ -117,7 +121,9 @@ def validate_flow(flow):
                         key: {"$ref": "nodes.evaluate." + key} for key in flow["questions"]})}}}
     elif "mode" in flow:
         flow = {k: v for k, v in flow.items() if k != "mode"}
-    fields(flow, {"version", "name", "start", "nodes"}, {"revision", "limits"}, "flow")
+    fields(flow, {"version", "name", "start", "nodes"}, {"revision", "limits", "title", "locale"}, "flow")
+    require(flow.get("locale", "en") in ("en", "zh-CN"), "locale must be en or zh-CN")
+    require(isinstance(flow.get("title", ""), str), "title must be text")
     require(type(flow["version"]) is int and flow["version"] == 1, "version must be 1")
     require(isinstance(flow["name"], str) and bool(flow["name"].strip()), "name must be text")
     require(isinstance(flow.get("revision", "1"), str), "revision must be a quoted string")
@@ -133,14 +139,24 @@ def validate_flow(flow):
     for name, node in nodes.items():
         require(isinstance(name, str) and bool(NAME.fullmatch(name)), "Invalid node ID")
         require(isinstance(node, dict), "Node must be a mapping: " + name)
+        require(isinstance(node.get("title", ""), str), "node title must be text")
         kind = node.get("type")
         if kind == "evaluate":
-            fields(node, {"type", "state", "questions", "next"}, set(), name)
-            validate_questions(node["questions"])
+            fields(node, {"type", "state", "questions", "next"}, {"title"}, name)
+            validate_questions(node["questions"], dynamic=True, singleton=True)
             edges[name] = [node["next"]]
-            ref_values = [node["state"]]
+            ref_values = [node["state"], node["questions"]]
+        elif kind == "filter":
+            fields(node, {"type", "items", "where", "next"}, {"title"}, name)
+            require(isinstance(node["where"], list) and bool(node["where"]), "filter needs predicates")
+            for predicate in node["where"]:
+                fields(predicate, {"field", "op", "value"}, set(), "filter predicate")
+                require(isinstance(predicate["field"], str) and all(predicate["field"].split(".")), "Invalid filter field")
+                require(isinstance(predicate["op"], str) and predicate["op"] in OPS, "Unknown comparison operator")
+            edges[name] = [node["next"]]
+            ref_values = [node["items"], [p["value"] for p in node["where"]]]
         elif kind == "branch":
-            fields(node, {"type", "cases", "default"}, set(), name)
+            fields(node, {"type", "cases", "default"}, {"title"}, name)
             require(isinstance(node["cases"], list) and bool(node["cases"]), "cases must be a nonempty list")
             edges[name] = [node["default"]]
             ref_values = []
@@ -150,7 +166,7 @@ def validate_flow(flow):
                 edges[name].append(case["next"])
                 ref_values.extend([case["left"], case["right"]])
         elif kind == "return":
-            fields(node, {"type", "value"}, set(), name)
+            fields(node, {"type", "value"}, {"title"}, name)
             edges[name] = []
             ref_values = [node["value"]]
         else:
@@ -198,6 +214,9 @@ def validate_flow(flow):
                 require(len(parts) >= 3, "Use nodes.<node>.<question>[.<field>]")
                 source, question = parts[1:3]
                 require(source != name and source in dominators[name], "Answer is not available on every path: " + ref)
+                if nodes[source]["type"] == "filter":
+                    require(question in ("items", "criteria", "count"), "Unknown filter output: " + ref)
+                    continue
                 require(nodes[source]["type"] == "evaluate" and question in nodes[source]["questions"], "Unknown answer reference: " + ref)
                 if len(parts) > 3:
                     kind = nodes[source]["questions"][question]["type"]
@@ -279,20 +298,51 @@ def run_flow(flow, inputs, client, trace=None):
             step = {"node": current, "type": node["type"]}
             trace["steps"].append(step)
             if node["type"] == "evaluate":
-                require(trace["calls"] < limits["max_calls"], "Jev call budget exceeded")
                 state = resolve(node["state"], context)
                 require(isinstance(state, (str, dict, list)), "Jev state must be text, object, or array")
-                step["request"] = {"state": state, "questions": copy.deepcopy(node["questions"])}
-                trace["calls"] += 1
+                questions = resolve(node["questions"], context)
+                validate_questions(questions, singleton=True)
+                forced = {key: {"type": "choice", "choice": next(iter(q["criteria"])),
+                                "probabilities": {next(iter(q["criteria"])): 1.0}}
+                          for key, q in questions.items() if q["type"] == "choice" and len(q["criteria"]) == 1}
+                pending = {key: q for key, q in questions.items() if key not in forced}
+                step["resolvedQuestions"] = copy.deepcopy(questions)
+                step["forcedAnswers"] = copy.deepcopy(forced)
+                step["request"] = {"state": state, "questions": copy.deepcopy(pending)}
                 call_started = time.monotonic()
-                response = client.evaluate(state=state, questions=node["questions"],
-                                           timeout=max(0.001, deadline - call_started), node_id=current)
+                if pending:
+                    require(trace["calls"] < limits["max_calls"], "Jev call budget exceeded")
+                    trace["calls"] += 1
+                    response = client.evaluate(state=state, questions=pending,
+                                               timeout=max(0.001, deadline - call_started), node_id=current)
+                    require(isinstance(response, dict), "Invalid response envelope")
+                    validate_answers(pending, response.get("answers"))
+                else:
+                    response = {"model": "none", "answers": {}, "source": "singleton"}
                 step["elapsedMs"] = round((time.monotonic() - call_started) * 1000)
                 step["response"] = copy.deepcopy(response)
                 require(time.monotonic() < deadline, "Flow timeout exceeded")
-                require(isinstance(response, dict), "Invalid response envelope")
-                validate_answers(node["questions"], response.get("answers"))
-                context["nodes"][current] = copy.deepcopy(response["answers"])
+                answers = {**response["answers"], **forced}
+                validate_answers(questions, answers)
+                context["nodes"][current] = copy.deepcopy(answers)
+                step["answers"] = copy.deepcopy(answers)
+                current = node["next"]
+            elif node["type"] == "filter":
+                items = resolve(node["items"], context)
+                require(isinstance(items, dict), "filter items must be an ID-to-item mapping")
+                kept, excluded = {}, {}
+                for key, item in items.items():
+                    require(isinstance(key, str) and key and isinstance(item, dict)
+                            and isinstance(item.get("description"), str) and bool(item["description"].strip()),
+                            "filter items need string IDs and descriptions")
+                    checks = [compare(resolve({"$ref": "input." + p["field"]}, {"input": item}),
+                                      p["op"], resolve(p["value"], context)) for p in node["where"]]
+                    if all(checks):
+                        kept[key] = item
+                    else:
+                        excluded[key] = [i for i, matched in enumerate(checks) if not matched]
+                context["nodes"][current] = {"items": kept, "criteria": {k: v["description"] for k, v in kept.items()}, "count": len(kept)}
+                step.update(inputCount=len(items), keptIds=list(kept), excluded=excluded)
                 current = node["next"]
             elif node["type"] == "branch":
                 target = node["default"]

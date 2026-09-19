@@ -12,9 +12,9 @@ destination = Path(args.destination).expanduser().absolute()
 if destination.name != "jevflow" or destination.exists() or destination.is_symlink():
     parser.error("destination must be a new directory named jevflow")
 destination.mkdir(parents=True)
-for name in (".codex-plugin", "jevflow", "skills", "scripts", "examples"):
+for name in (".codex-plugin", "jevflow", "skills", "scripts", "examples", "adapters"):
     shutil.copytree(source / name, destination / name,
-                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-for name in ("pyproject.toml", "README.md"):
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "node_modules"))
+for name in ("pyproject.toml", "README.md", "README.en.md"):
     shutil.copy2(source / name, destination / name)
 print(destination)

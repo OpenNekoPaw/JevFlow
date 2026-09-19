@@ -1,0 +1,8 @@
+{
+  "name": "jevflow-gateway-adapter",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ai": "7.0.106"
+  }
+}

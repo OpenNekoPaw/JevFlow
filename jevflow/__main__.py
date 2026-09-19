@@ -33,6 +33,12 @@ def parser():
     commands = cli.add_subparsers(dest="command", required=True)
     validate = commands.add_parser("validate", help="Validate YAML without model calls")
     validate.add_argument("flow")
+    view = commands.add_parser("visualize", help="Export an offline HTML inspector or Mermaid graph")
+    view.add_argument("flow")
+    view.add_argument("--output", required=True)
+    view.add_argument("--format", choices=["html", "mermaid"], default="html")
+    view.add_argument("--locale", choices=["zh-CN", "en"])
+    view.add_argument("--trace", help="Optional trace from the same flow snapshot")
     run = commands.add_parser("run", help="Execute a flow; live unless --mock is supplied")
     run.add_argument("flow")
     run.add_argument("--input", required=True, help="Input JSON file, or - for stdin")
@@ -54,6 +60,14 @@ def main(argv=None):
         flow = load_flow(args.flow)
         if args.command == "validate":
             emit({"valid": True, "name": flow["name"], "nodes": len(flow["nodes"])})
+            return 0
+        if args.command == "visualize":
+            from .visualize import render
+            output = Path(args.output)
+            rendered = render(flow, args.format, read_json(args.trace) if args.trace else None, args.locale)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(rendered, encoding="utf-8")
+            emit({"status": "completed", "output": str(output.resolve()), "format": args.format})
             return 0
         if args.command == "run":
             inputs = json.load(sys.stdin) if args.input == "-" else read_json(args.input)

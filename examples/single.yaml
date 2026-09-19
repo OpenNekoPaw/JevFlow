@@ -1,14 +1,15 @@
 version: 1
+locale: zh-CN
 name: single-triage
 mode: single
 state: {$ref: input}
 questions:
   intent:
     type: choice
-    instructions: Which department best matches the customer's message?
+    instructions: 哪个部门最适合处理客户的消息？
     criteria:
-      billing: Charges, invoices, duplicate payments, or refunds.
-      technical: Login problems, bugs, or service failures.
-      other: Neither department fits, or information is insufficient.
+      billing: 收费、发票、重复付款或退款。
+      technical: 登录问题、程序错误或服务故障。
+      other: 以上部门均不适合，或信息不足。
 result:
   route: {$ref: nodes.evaluate.intent.choice}

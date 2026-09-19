@@ -1,0 +1,38 @@
+version: 1
+name: constrained-choice
+title: 先限制候选，再交给 Jev 判断
+locale: zh-CN
+revision: '1'
+start: eligible
+nodes:
+  eligible:
+    type: filter
+    title: 保留符合预算的候选
+    items: {$ref: input.candidates}
+    where:
+      - {field: cost, op: lte, value: {$ref: input.budget}}
+    next: available
+  available:
+    type: branch
+    title: 检查候选是否为空
+    cases:
+      - {left: {$ref: nodes.eligible.count}, op: gt, right: 0, next: select}
+    default: unavailable
+  select:
+    type: evaluate
+    title: 仅在允许范围内判断
+    state: {$ref: input.request}
+    questions:
+      action:
+        type: choice
+        instructions: 根据用户需求，在允许且符合预算的候选中选择最合适的一项。
+        criteria: {$ref: nodes.eligible.criteria}
+    next: done
+  done:
+    type: return
+    title: 返回选择
+    value: {candidate: {$ref: nodes.select.action.choice}}
+  unavailable:
+    type: return
+    title: 无符合条件的候选
+    value: {candidate: null, reason: no_eligible_candidate}

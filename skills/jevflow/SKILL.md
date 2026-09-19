@@ -17,7 +17,7 @@ The installed `jevflow` command or `python -m jevflow` also works in an environm
 
 When this skill is symlinked from a source checkout, resolve the real skill directory; its grandparent is the repository root. The checkout's `.venv/bin/jevflow` can be invoked by absolute path from any working directory.
 
-Read [the format reference](references/flow-format.md) before writing or changing nodes. Follow the existing flow's scope and language. The engine supports only `evaluate`, `branch`, and `return`; it does not execute external business actions.
+Read [the format reference](references/flow-format.md) before writing or changing nodes. Follow the existing flow's scope. For this project, write policies, model prompts, human descriptions and node titles in Chinese; retain English field names, node IDs and API enums. Use `locale: zh-CN`; English documentation and UI labels remain available. The engine supports `filter`, `evaluate`, `branch`, and `return`; it does not execute external business actions.
 
 ```sh
 jevflow validate flow.yaml
@@ -35,7 +35,7 @@ Omit `--mock` on `run`, or add `--live` on `test`, to call the actual model. Liv
 - Use `choice` for one of defined options; include an unmatched/insufficient outcome when appropriate. Use `noul` for yes/no probability and `score` for a degree on described levels.
 - Group independent questions over the same state into one `evaluate`. They cannot read each other's answers. A dependent question belongs in a later node whose `state` explicitly references prior answers.
 - Use `$ref` for data, explicit comparison operators for branches, and `return` for the host-facing result. Keep thresholds in branch configuration. Do not embed executable Python or shell in YAML.
-- When candidates change per request, have the host bind the actual candidates into a validated flow snapshot. Handle a sole legal candidate deterministically instead of inventing a second choice. For concurrent requests, execute separate snapshots; do not queue calls that still depend on a mutable shared definition. Host scheduling and node-level parallelism are different: this MVP supports host-concurrent runs and batched Jev questions, but no parallel YAML node branches.
+- When candidates change per request, use dynamic `criteria: {$ref: input.criteria}` or a filter output. Singleton choices bypass the model automatically. Empty choices must follow an explicit branch or fail closed. For concurrent requests, execute separate snapshots; do not queue calls that still depend on a mutable shared definition. Host scheduling and node-level parallelism are different: this MVP supports host-concurrent runs and batched Jev questions, but no parallel YAML node branches.
 
 ## Adjust and improve
 
@@ -48,3 +48,13 @@ Validate first, then run offline cases covering the changed branch and unaffecte
 For a host process, call `Flow.update(candidate)` or `Flow.reload()` after validation; invalid updates preserve the active definition. Existing runs keep their snapshot. CLI runs reload the file each time. Prefer writing a candidate file and atomically replacing the active YAML after checking it; do not modify the graph halfway through a running request.
 
 Report the changed nodes, why they changed, validation results and whether evidence was mock or live. A passing mock is not evidence of improved Jev accuracy. Keep improvements within the user's requested scenario; do not add infrastructure or new action permissions to optimize a flow.
+
+## Constrain and visualize
+
+Use `filter` for exact predicates over host-computed candidate facts. Its outputs are `items`, `criteria` and `count`; predicates combine with AND. Route on `count` before evaluation when empty results are possible. The next choice must reference the filtered `.criteria`, so excluded candidates cannot reappear. Host tournament/group processing must apply constraints globally before splitting candidates. A preliminary Jev judgment should change subsequent evidence, allowed candidates or routing; avoid adding a classification call followed by an unchanged full-candidate choice.
+
+Distinguish hard rules, provable outcomes and tunable heuristics. Do not describe a filtered candidate as a guaranteed win unless the host evidence proves it. A public uncertainty set is not a probability. Record excluded IDs and failed predicate indices from filter traces, and compare outcome regressions when changing a heuristic.
+
+Generate `visualize flow.yaml --output flow.html [--trace trace.json]` for a read-only offline inspector, or use `--format mermaid`. The trace must belong to the exact configuration snapshot; export `trace.flow` if the current YAML changed. Click nodes to inspect conditions and requests. Edit YAML, validate and regenerate; there is no drag-and-drop editor. Preserve privacy of trace-bearing previews just as for traces.
+
+The optional `GatewayClient` belongs to the plugin; the host supplies its Node SDK directory and `AI_GATEWAY_API_KEY`. See the root README for installation. Do not copy a second provider client into a scenario adapter. Keep the native Python client available for `TYPESAFE_API_KEY`.

@@ -1,4 +1,5 @@
 version: 1
+locale: zh-CN
 name: support-triage
 revision: "1"
 start: classify
@@ -14,14 +15,14 @@ nodes:
     questions:
       intent:
         type: choice
-        instructions: Which department best matches the customer's message?
+        instructions: 哪个部门最适合处理客户的消息？
         criteria:
-          billing: Charges, invoices, duplicate payments, or refunds.
-          technical: Login problems, bugs, or service failures.
-          other: Neither department fits, or information is insufficient.
+          billing: 收费、发票、重复付款或退款。
+          technical: 登录问题、程序错误或服务故障。
+          other: 以上部门均不适合，或信息不足。
       urgent:
         type: noul
-        instructions: Does the message describe an immediate service outage or a time-critical need?
+        instructions: 消息是否描述当前服务中断或必须立即处理的需求？
     next: route
   route:
     type: branch
@@ -47,11 +48,11 @@ nodes:
     questions:
       specificity:
         type: score
-        instructions: How specifically does this message describe the billing problem?
+        instructions: 这条消息对账单问题的描述有多具体？
         criteria:
-          - No billing problem is identifiable.
-          - A billing concern is stated, but the issue is unclear.
-          - A concrete billing issue is identified, such as a duplicate charge.
+          - 无法识别账单问题。
+          - 提到账单顾虑，但问题不明确。
+          - 描述具体账单问题，例如重复扣款。
     next: billing_route
   billing_route:
     type: branch
