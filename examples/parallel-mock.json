@@ -1,0 +1,7 @@
+{
+  "analyze.environment": {"constrained": {"type": "noul", "noul": 0.9}},
+  "analyze.status": {"vulnerable": {"type": "noul", "noul": 0.85}},
+  "analyze.items": {"recovery": {"type": "noul", "noul": 0.8}},
+  "analyze.enemies": {"imminent": {"type": "noul", "noul": 0.95}},
+  "plan": {"tactic": {"type": "choice", "choice": "reposition", "probabilities": {"recover": 0.15, "reposition": 0.8, "advance": 0.05}}}
+}

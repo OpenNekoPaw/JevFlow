@@ -5,10 +5,12 @@ import json
 import os
 import socket
 import time
+from threading import Lock
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from .core import FlowError, json_value, require, validate_answers, validate_questions
+from .control import FlowError
+from .schema import json_value, require, validate_answers, validate_questions
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -25,7 +27,6 @@ class JevClient:
         self.model = model
         self.endpoint = endpoint
         self.timeout = timeout
-        self._opener = build_opener(NoRedirect())
 
     def evaluate(self, state, questions, timeout=None, node_id=None):
         """Return native answers, model and usage. No automatic retries.
@@ -42,7 +43,8 @@ class JevClient:
                           method="POST")
         started = time.monotonic()
         try:
-            with self._opener.open(request, timeout=min(self.timeout, timeout or self.timeout)) as response:
+            # Handlers belong to this request, rather than shared worker state.
+            with build_opener(NoRedirect()).open(request, timeout=min(self.timeout, timeout or self.timeout)) as response:
                 result = json.load(response)
         except HTTPError as exc:
             exc.close()
@@ -66,13 +68,15 @@ class MockClient:
         require(isinstance(answers, dict), "Mocks must map node IDs to answer mappings")
         self.answers = copy.deepcopy(answers)
         self.visits = {}
+        self._lock = Lock()
 
     def evaluate(self, state, questions, timeout=None, node_id=None):
         require(node_id in self.answers, "Missing mock for node: " + str(node_id))
         value = self.answers[node_id]
         if isinstance(value, list):
-            index = self.visits.get(node_id, 0)
-            require(index < len(value), "Mock sequence exhausted: " + node_id)
-            self.visits[node_id] = index + 1
+            with self._lock:
+                index = self.visits.get(node_id, 0)
+                require(index < len(value), "Mock sequence exhausted: " + node_id)
+                self.visits[node_id] = index + 1
             value = value[index]
         return {"model": "mock", "answers": copy.deepcopy(value)}

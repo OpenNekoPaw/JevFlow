@@ -1,228 +1,13 @@
-"""Four node types: filter, evaluate, branch, return. No expression evaluation."""
-
+"""Execute typed decision flows with bounded parallel judgments."""
 import copy
-import hashlib
-import json
-import math
-import re
 import time
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from datetime import datetime, timezone
-from pathlib import Path
 
-import yaml
-
-
-class FlowError(ValueError):
-    pass
-
-
-class UniqueLoader(yaml.SafeLoader):
-    """Reject duplicate YAML keys rather than silently replacing a node."""
-
-
-def _mapping(loader, node):
-    result = {}
-    for key_node, value_node in node.value:
-        key = loader.construct_object(key_node)
-        if not isinstance(key, str):
-            raise FlowError("YAML mapping keys must be strings; quote true/false and numbers")
-        if key in result:
-            raise FlowError("Duplicate YAML key: " + key)
-        result[key] = loader.construct_object(value_node)
-    return result
-
-
-UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _mapping)
-NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
-OPS = {"eq", "ne", "gt", "gte", "lt", "lte"}
-
-
-def require(condition, message):
-    if not condition:
-        raise FlowError(message)
-
-
-def fields(value, required, optional, where):
-    require(isinstance(value, dict), where + " must be a mapping")
-    require(required <= value.keys(), where + " missing fields: " + str(sorted(required - value.keys())))
-    require(value.keys() <= required | optional, where + " has unknown fields: " + str(sorted(value.keys() - required - optional)))
-
-
-def number(value):
-    return type(value) in (int, float) and math.isfinite(value)
-
-
-def json_value(value):
-    try:
-        json.dumps(value, allow_nan=False)
-    except (ValueError, TypeError, RecursionError) as exc:
-        raise FlowError("Values must be finite JSON data; quote YAML dates and avoid recursive aliases") from exc
-
-
-def load_flow(path):
-    try:
-        flow = yaml.load(Path(path).read_text(encoding="utf-8"), Loader=UniqueLoader)
-    except yaml.YAMLError as exc:
-        raise FlowError("Invalid YAML: " + str(exc)) from exc
-    return validate_flow(flow)
-
-
-def validate_questions(questions, dynamic=False, singleton=False):
-    require(isinstance(questions, dict) and bool(questions), "questions must be a nonempty mapping")
-    for name, question in questions.items():
-        require(isinstance(name, str) and bool(NAME.fullmatch(name)), "Invalid question ID")
-        fields(question, {"type", "instructions"}, {"criteria"}, "question " + name)
-        kind = question["type"]
-        require(kind in ("choice", "noul", "score"), "Question type must be choice, noul, or score")
-        require(isinstance(question["instructions"], str) and bool(question["instructions"].strip()), "instructions must be nonempty text")
-        criteria = question.get("criteria")
-        if kind == "choice":
-            if dynamic and isinstance(criteria, dict) and "$ref" in criteria:
-                list(references(criteria))
-                continue
-            require(isinstance(criteria, dict) and (1 if singleton else 2) <= len(criteria) <= 255,
-                    "choice needs " + ("1" if singleton else "2") + "..255 options")
-            require(all(isinstance(k, str) and k and isinstance(v, str) and v.strip() for k, v in criteria.items()), "choice options need string IDs and descriptions")
-        elif kind == "score":
-            require(isinstance(criteria, list) and len(criteria) >= 2, "score needs at least two ordered levels")
-            require(all(isinstance(v, str) and v.strip() for v in criteria), "score levels must be text")
-        elif criteria is not None:
-            fields(criteria, {"true", "false"}, set(), "noul criteria")
-            require(all(isinstance(v, str) and v.strip() for v in criteria.values()), "noul criteria must be text")
-
-
-def references(value):
-    if isinstance(value, dict):
-        if "$ref" in value:
-            fields(value, {"$ref"}, set(), "reference")
-            require(isinstance(value["$ref"], str), "$ref must be a dotted path")
-            yield value["$ref"]
-        else:
-            for item in value.values():
-                yield from references(item)
-    elif isinstance(value, list):
-        for item in value:
-            yield from references(item)
-
-
-def validate_flow(flow):
-    json_value(flow)
-    require(isinstance(flow, dict), "flow must be a mapping")
-    mode = flow.get("mode", "flow")
-    require(mode in ("single", "flow"), "mode must be single or flow")
-    if mode == "single":
-        fields(flow, {"version", "name", "mode", "state", "questions"}, {"revision", "limits", "result", "title", "locale"}, "single")
-        validate_questions(flow["questions"], dynamic=True, singleton=True)
-        flow = {**{k: flow[k] for k in ("version", "name", "revision", "limits", "title", "locale") if k in flow},
-                "start": "evaluate", "nodes": {
-                    "evaluate": {"type": "evaluate", "state": flow["state"],
-                                 "questions": flow["questions"], "next": "result"},
-                    "result": {"type": "return", "value": flow.get("result", {
-                        key: {"$ref": "nodes.evaluate." + key} for key in flow["questions"]})}}}
-    elif "mode" in flow:
-        flow = {k: v for k, v in flow.items() if k != "mode"}
-    fields(flow, {"version", "name", "start", "nodes"}, {"revision", "limits", "title", "locale"}, "flow")
-    require(flow.get("locale", "en") in ("en", "zh-CN"), "locale must be en or zh-CN")
-    require(isinstance(flow.get("title", ""), str), "title must be text")
-    require(type(flow["version"]) is int and flow["version"] == 1, "version must be 1")
-    require(isinstance(flow["name"], str) and bool(flow["name"].strip()), "name must be text")
-    require(isinstance(flow.get("revision", "1"), str), "revision must be a quoted string")
-    limits = flow.get("limits", {})
-    fields(limits, set(), {"max_steps", "max_calls", "timeout_seconds"}, "limits")
-    for key, value in limits.items():
-        require(type(value) is int and value > 0, "limits must be positive integers: " + key)
-    nodes = flow["nodes"]
-    require(isinstance(nodes, dict) and bool(nodes), "nodes must be nonempty")
-    require(isinstance(flow["start"], str) and flow["start"] in nodes, "start must name an existing node")
-    edges = {}
-    node_refs = {}
-    for name, node in nodes.items():
-        require(isinstance(name, str) and bool(NAME.fullmatch(name)), "Invalid node ID")
-        require(isinstance(node, dict), "Node must be a mapping: " + name)
-        require(isinstance(node.get("title", ""), str), "node title must be text")
-        kind = node.get("type")
-        if kind == "evaluate":
-            fields(node, {"type", "state", "questions", "next"}, {"title"}, name)
-            validate_questions(node["questions"], dynamic=True, singleton=True)
-            edges[name] = [node["next"]]
-            ref_values = [node["state"], node["questions"]]
-        elif kind == "filter":
-            fields(node, {"type", "items", "where", "next"}, {"title"}, name)
-            require(isinstance(node["where"], list) and bool(node["where"]), "filter needs predicates")
-            for predicate in node["where"]:
-                fields(predicate, {"field", "op", "value"}, set(), "filter predicate")
-                require(isinstance(predicate["field"], str) and all(predicate["field"].split(".")), "Invalid filter field")
-                require(isinstance(predicate["op"], str) and predicate["op"] in OPS, "Unknown comparison operator")
-            edges[name] = [node["next"]]
-            ref_values = [node["items"], [p["value"] for p in node["where"]]]
-        elif kind == "branch":
-            fields(node, {"type", "cases", "default"}, {"title"}, name)
-            require(isinstance(node["cases"], list) and bool(node["cases"]), "cases must be a nonempty list")
-            edges[name] = [node["default"]]
-            ref_values = []
-            for case in node["cases"]:
-                fields(case, {"left", "op", "right", "next"}, set(), "branch case")
-                require(isinstance(case["op"], str) and case["op"] in OPS, "Unknown comparison operator")
-                edges[name].append(case["next"])
-                ref_values.extend([case["left"], case["right"]])
-        elif kind == "return":
-            fields(node, {"type", "value"}, {"title"}, name)
-            edges[name] = []
-            ref_values = [node["value"]]
-        else:
-            raise FlowError("Unknown node type at " + name)
-        require(all(isinstance(target, str) and target in nodes for target in edges[name]), "Unknown next node at " + name)
-        node_refs[name] = list(references(ref_values))
-
-    reached, pending = set(), [flow["start"]]
-    while pending:
-        name = pending.pop()
-        if name not in reached:
-            reached.add(name)
-            pending.extend(edges[name])
-    require(reached == set(nodes), "Unreachable nodes: " + str(sorted(set(nodes) - reached)))
-    can_exit = {name for name in nodes if not edges[name]}
-    while True:
-        expanded = can_exit | {name for name, targets in edges.items() if any(t in can_exit for t in targets)}
-        if expanded == can_exit:
-            break
-        can_exit = expanded
-    require(can_exit == set(nodes), "Every node must have a path to return")
-
-    # A referenced answer must be available on EVERY path reaching this node.
-    predecessors = {name: set() for name in nodes}
-    for name, targets in edges.items():
-        for target in targets:
-            predecessors[target].add(name)
-    dominators = {name: ({name} if name == flow["start"] else set(nodes)) for name in nodes}
-    changed = True
-    while changed:
-        changed = False
-        for name in nodes:
-            if name == flow["start"]:
-                continue
-            common = set.intersection(*(dominators[p] for p in predecessors[name]))
-            updated = common | {name}
-            if updated != dominators[name]:
-                dominators[name] = updated
-                changed = True
-    for name, refs in node_refs.items():
-        for ref in refs:
-            parts = ref.split(".")
-            require(all(parts) and parts[0] in ("input", "nodes"), "Invalid reference: " + ref)
-            if parts[0] == "nodes":
-                require(len(parts) >= 3, "Use nodes.<node>.<question>[.<field>]")
-                source, question = parts[1:3]
-                require(source != name and source in dominators[name], "Answer is not available on every path: " + ref)
-                if nodes[source]["type"] == "filter":
-                    require(question in ("items", "criteria", "count"), "Unknown filter output: " + ref)
-                    continue
-                require(nodes[source]["type"] == "evaluate" and question in nodes[source]["questions"], "Unknown answer reference: " + ref)
-                if len(parts) > 3:
-                    kind = nodes[source]["questions"][question]["type"]
-                    allowed = {"type", "noul"} if kind == "noul" else {kind, "type", "probabilities", "confidence"}
-                    require(parts[3] in allowed, "Unknown answer field: " + ref)
-    return flow
+from .control import FlowError, check_cancelled
+# Keep the previous core imports available to existing Python callers.
+from .schema import (fields, json_value, load_flow, number, references, require,
+                     snapshot_hash, validate_answers, validate_flow, validate_questions)
 
 
 def resolve(value, context):
@@ -252,80 +37,256 @@ def compare(left, op, right):
     return {"gt": left > right, "gte": left >= right, "lt": left < right, "lte": left <= right}[op]
 
 
-def validate_answers(questions, answers):
-    require(isinstance(answers, dict) and answers.keys() == questions.keys(), "Response must answer exactly the requested questions")
-    for key, question in questions.items():
-        answer = answers[key]
-        kind = question["type"]
-        require(isinstance(answer, dict) and answer.get("type") == kind, "Answer type mismatch: " + key)
-        if kind == "noul":
-            value = answer.get("noul")
-            require(number(value) and 0 <= value <= 1, "Invalid noul probability: " + key)
+def _prepare_evaluation(node, context, node_id):
+    state = resolve(node["state"], context)
+    require(isinstance(state, (str, dict, list)), "Jev state must be text, object, or array")
+    questions = resolve(node["questions"], context)
+    validate_questions(questions, singleton=True)
+    forced = {key: {"type": "choice", "choice": next(iter(q["criteria"])),
+                    "probabilities": {next(iter(q["criteria"])): 1.0}}
+              for key, q in questions.items() if q["type"] == "choice" and len(q["criteria"]) == 1}
+    pending = {key: q for key, q in questions.items() if key not in forced}
+    return {"node": node_id, "type": "evaluate", "status": "pending",
+            "resolvedQuestions": questions, "forcedAnswers": forced,
+            "request": {"state": state, "questions": pending}}
+
+
+def _execute_evaluation(prepared, client, deadline, cancel_event=None):
+    # Workers never mutate the published trace or another branch's state.
+    step = copy.deepcopy(prepared)
+    started = time.monotonic()
+    step["startedAt"] = datetime.now(timezone.utc).isoformat()
+    try:
+        check_cancelled(cancel_event)
+        require(started < deadline, "Flow timeout exceeded")
+        request = step["request"]
+        if request["questions"]:
+            response = client.evaluate(state=copy.deepcopy(request["state"]),
+                                       questions=copy.deepcopy(request["questions"]),
+                                       timeout=deadline - started, node_id=step["node"])
+            require(isinstance(response, dict), "Invalid response envelope")
+            validate_answers(request["questions"], response.get("answers"))
         else:
-            criteria = question["criteria"]
-            labels = set(criteria) if kind == "choice" else {str(i) for i in range(len(criteria))}
-            probabilities = answer.get("probabilities")
-            require(isinstance(probabilities, dict) and set(probabilities) == labels, "Invalid distribution labels: " + key)
-            require(all(number(p) and 0 <= p <= 1 for p in probabilities.values()), "Invalid probability: " + key)
-            require(abs(sum(probabilities.values()) - 1) <= 0.02, "Distribution must sum to one: " + key)
-            value = answer.get(kind)
-            if kind == "choice":
-                require(isinstance(value, str) and value in labels, "Unknown choice: " + key)
-                require(probabilities[value] >= max(probabilities.values()) - 1e-6, "Choice disagrees with distribution: " + key)
+            response = {"model": "none", "answers": {}, "source": "singleton"}
+        check_cancelled(cancel_event)
+        require(time.monotonic() < deadline, "Flow timeout exceeded")
+        answers = {**response["answers"], **step["forcedAnswers"]}
+        validate_answers(step["resolvedQuestions"], answers)
+        step.update(status="completed", response=copy.deepcopy(response), answers=copy.deepcopy(answers),
+                    elapsedMs=round((time.monotonic() - started) * 1000))
+        return step
+    except Exception as error:
+        step.update(status="failed", error=str(error), retryable=bool(getattr(error, "retryable", False)),
+                    elapsedMs=round((time.monotonic() - started) * 1000),
+                    budgetMs=max(0, round((deadline - started) * 1000)))
+        if hasattr(error, "transport_diagnostics"):
+            step["transport"] = copy.deepcopy(error.transport_diagnostics)
+        error.evaluation_trace = step
+        raise
+
+
+def _record_failure(step, error):
+    step.update(copy.deepcopy(getattr(error, "evaluation_trace", {})))
+    step.update(status="failed", error=str(error))
+
+
+def _publish(observer, trace):
+    """Observability is optional and must never change decision semantics.
+
+    Only the execution owner publishes trace snapshots; worker threads never
+    mutate/read the shared trace. Observers must enqueue/store promptly.
+    """
+    if observer is not None:
+        try:
+            observer(copy.deepcopy(trace))
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning("Flow observer failed", exc_info=True)
+
+
+def _check_call_budget(limits, calls, additional):
+    cap = limits["max_calls"]
+    require(cap is None or calls + additional <= cap, "Jev call budget exceeded")
+
+
+def _run_parallel(node, context, node_id, client, deadline, limits, trace, step, cancel_event=None, observer=None):
+    # Resolve every branch against the same pre-fork snapshot before any calls.
+    branches = {name: _prepare_evaluation(definition, context, node_id + "." + name)
+                for name, definition in node["branches"].items()}
+    step["branches"] = branches
+    _publish(observer, trace)
+    jobs = [name for name, record in branches.items() if record["request"]["questions"]]
+    _check_call_budget(limits, trace["calls"], len(jobs))
+    for name, record in branches.items():
+        if not record["request"]["questions"]:
+            branches[name] = _execute_evaluation(record, client, deadline, cancel_event)
+    if not jobs:
+        step["status"] = "completed"
+        _publish(observer, trace)
+        return {name: record["answers"] for name, record in branches.items()}
+    executor = ThreadPoolExecutor(max_workers=min(limits["max_concurrency"], len(jobs)))
+    active, cursor = {}, 0
+    step["status"] = "running"
+    try:
+        while cursor < len(jobs) or active:
+            check_cancelled(cancel_event)
+            require(time.monotonic() < deadline, "Flow timeout exceeded")
+            while cursor < len(jobs) and len(active) < limits["max_concurrency"]:
+                check_cancelled(cancel_event)
+                name = jobs[cursor]
+                cursor += 1
+                branches[name]["status"] = "running"
+                branches[name]["startedAt"] = datetime.now(timezone.utc).isoformat()
+                trace["calls"] += 1
+                _publish(observer, trace)
+                active[executor.submit(_execute_evaluation, branches[name], client, deadline, cancel_event)] = name
+            remaining = max(0, deadline - time.monotonic())
+            done, _ = wait(active, timeout=min(remaining, 0.05) if cancel_event is not None else remaining,
+                           return_when=FIRST_COMPLETED)
+            check_cancelled(cancel_event)
+            if not done:
+                require(time.monotonic() < deadline, "Flow timeout exceeded")
+                continue
+            errors = []
+            for future in done:
+                name = active.pop(future)
+                try:
+                    branches[name] = future.result()
+                except Exception as exc:
+                    _record_failure(branches[name], exc)
+                    errors.append(exc)
+            _publish(observer, trace)
+            if errors:
+                raise errors[0]
+        step["status"] = "completed"
+        _publish(observer, trace)
+        return {name: record["answers"] for name, record in branches.items()}
+    except Exception as exc:
+        step.update(status="failed", error=str(exc))
+        for future, name in active.items():
+            if future.cancel():
+                branches[name]["status"] = "cancelled"
+            elif future.done():
+                try:
+                    branches[name] = future.result()
+                except Exception as error:
+                    _record_failure(branches[name], error)
             else:
-                require(number(value) and 0 <= value <= len(criteria) - 1, "Score out of range: " + key)
-            if "confidence" in answer:
-                require(number(answer["confidence"]) and 0 <= answer["confidence"] <= 1, "Invalid confidence: " + key)
+                branches[name]["status"] = "abandoned"
+        for name in jobs[cursor:]:
+            branches[name]["status"] = "cancelled"
+        raise
+    finally:
+        # In-flight synchronous transports cannot be forcibly interrupted. They
+        # receive the shared deadline; late results never enter the run's trace.
+        _publish(observer, trace)
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
-def run_flow(flow, inputs, client, trace=None):
+def run_flow(flow, inputs, client, trace=None, *, deadline_unix_ms=None, cancel_event=None, observer=None):
     """Execute one immutable flow snapshot using a duck-typed Jev client."""
-    flow = validate_flow(copy.deepcopy(flow))
+    return _run_snapshot(validate_flow(copy.deepcopy(flow)), inputs, client, trace,
+                         deadline_unix_ms=deadline_unix_ms, cancel_event=cancel_event, observer=observer)
+
+
+def _run_snapshot(flow, inputs, client, trace=None, *, deadline_unix_ms=None, cancel_event=None, observer=None):
+    """Execute an owned, validated snapshot. Only internal snapshot owners call this."""
     json_value(inputs)
     trace = trace if trace is not None else {}
     started = time.monotonic()
-    trace.update({"flow": flow, "flowHash": hashlib.sha256(json.dumps(flow, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
+    trace.update({"flow": flow, "flowHash": snapshot_hash(flow),
                   "input": copy.deepcopy(inputs), "mode": client.mode, "startedAt": datetime.now(timezone.utc).isoformat(),
                   "status": "running", "calls": 0, "steps": []})
     context = {"input": copy.deepcopy(inputs), "nodes": {}}
-    limits = {"max_steps": 32, "max_calls": 8, "timeout_seconds": 60, **flow.get("limits", {})}
+    limits = {"max_steps": 32, "max_calls": 8, "timeout_seconds": 60, "max_concurrency": 5, **flow.get("limits", {})}
     deadline = started + limits["timeout_seconds"]
+    if deadline_unix_ms is not None:
+        require(number(deadline_unix_ms), "deadline_unix_ms must be finite")
+        deadline = min(deadline, time.monotonic() + (deadline_unix_ms / 1000 - time.time()))
+        trace["deadlineUnixMs"] = deadline_unix_ms
     current = flow["start"]
+    steps_used = 0
+    _publish(observer, trace)
     try:
-        for index in range(limits["max_steps"]):
+        while steps_used < limits["max_steps"]:
+            check_cancelled(cancel_event)
+            steps_used += 1
             require(time.monotonic() < deadline, "Flow timeout exceeded")
             node = flow["nodes"][current]
-            step = {"node": current, "type": node["type"]}
+            step = {"node": current, "type": node["type"], "status": "running"}
+            step["startedAt"] = datetime.now(timezone.utc).isoformat()
+            step_started = time.monotonic()
             trace["steps"].append(step)
+            _publish(observer, trace)
             if node["type"] == "evaluate":
+                prepared = _prepare_evaluation(node, context, current)
+                step.update(prepared)
+                if prepared["request"]["questions"]:
+                    _check_call_budget(limits, trace["calls"], 1)
+                    trace["calls"] += 1
+                step["status"] = "running"
+                _publish(observer, trace)
+                try:
+                    step.update(_execute_evaluation(prepared, client, deadline, cancel_event))
+                except Exception as error:
+                    _record_failure(step, error)
+                    raise
+                context["nodes"][current] = copy.deepcopy(step["answers"])
+                current = node["next"]
+            elif node["type"] == "parallel":
+                steps_used += len(node["branches"])
+                require(steps_used <= limits["max_steps"], "Node step budget exceeded")
+                answers = _run_parallel(node, context, current, client, deadline, limits, trace, step, cancel_event, observer)
+                context["nodes"][current] = copy.deepcopy(answers)
+                current = node["next"]
+            elif node["type"] == "select":
+                step["criteriaChecks"] = []
+                for index, source in enumerate([node["criteria"], *node.get("fallback_criteria", [])]):
+                    criteria = resolve(source, context)
+                    require(isinstance(criteria, dict), "select criteria must resolve to a mapping")
+                    require(all(isinstance(k, str) and k and isinstance(v, str) and v.strip()
+                                for k, v in criteria.items()), "select criteria need string IDs and descriptions")
+                    step["criteriaChecks"].append({"index": index, "count": len(criteria)})
+                    if criteria:
+                        break
+                require(bool(criteria), "select requires nonempty criteria")
+                step.update(criteriaIndex=index, inputCount=len(criteria))
                 state = resolve(node["state"], context)
                 require(isinstance(state, (str, dict, list)), "Jev state must be text, object, or array")
-                questions = resolve(node["questions"], context)
-                validate_questions(questions, singleton=True)
-                forced = {key: {"type": "choice", "choice": next(iter(q["criteria"])),
-                                "probabilities": {next(iter(q["criteria"])): 1.0}}
-                          for key, q in questions.items() if q["type"] == "choice" and len(q["criteria"]) == 1}
-                pending = {key: q for key, q in questions.items() if key not in forced}
-                step["resolvedQuestions"] = copy.deepcopy(questions)
-                step["forcedAnswers"] = copy.deepcopy(forced)
-                step["request"] = {"state": state, "questions": copy.deepcopy(pending)}
-                call_started = time.monotonic()
-                if pending:
-                    require(trace["calls"] < limits["max_calls"], "Jev call budget exceeded")
-                    trace["calls"] += 1
-                    response = client.evaluate(state=state, questions=pending,
-                                               timeout=max(0.001, deadline - call_started), node_id=current)
-                    require(isinstance(response, dict), "Invalid response envelope")
-                    validate_answers(pending, response.get("answers"))
-                else:
-                    response = {"model": "none", "answers": {}, "source": "singleton"}
-                step["elapsedMs"] = round((time.monotonic() - call_started) * 1000)
-                step["response"] = copy.deepcopy(response)
-                require(time.monotonic() < deadline, "Flow timeout exceeded")
-                answers = {**response["answers"], **forced}
-                validate_answers(questions, answers)
-                context["nodes"][current] = copy.deepcopy(answers)
-                step["answers"] = copy.deepcopy(answers)
+                size = node.get("batch_size", 255)
+                # Bound every round before starting requests; ordering is stable.
+                count, needed_steps, needed_calls = len(criteria), 0, 0
+                while True:
+                    sizes = [min(size, count - offset) for offset in range(0, count, size)]
+                    needed_steps += len(sizes)
+                    needed_calls += sum(n > 1 for n in sizes)
+                    if len(sizes) == 1:
+                        break
+                    count = len(sizes)
+                require(steps_used + needed_steps <= limits["max_steps"], "Node step budget exceeded")
+                _check_call_budget(limits, trace["calls"], needed_calls)
+                # Use a literal isolated context so $ref-shaped input data is never interpreted as code.
+                step["rounds"] = []
+                remaining = list(criteria)
+                while True:
+                    groups = [remaining[i:i + size] for i in range(0, len(remaining), size)]
+                    batch_input = {"state": state, "groups": {"batch_" + str(i): {k: criteria[k] for k in group}
+                                                             for i, group in enumerate(groups)}}
+                    branches = {name: {"state": {"$ref": "input.state"}, "questions": {"selection": {
+                        "type": "choice", "instructions": node["instructions"],
+                        "criteria": {"$ref": "input.groups." + name}}}} for name in batch_input["groups"]}
+                    round_id = current + ".round_" + str(len(step["rounds"]))
+                    record = {"node": round_id, "type": "parallel", "inputCount": len(remaining)}
+                    step["rounds"].append(record)
+                    steps_used += len(groups)
+                    answers = _run_parallel({"branches": branches}, {"input": batch_input}, round_id,
+                                            client, deadline, limits, trace, record, cancel_event, observer)
+                    remaining = [answers[name]["selection"]["choice"] for name in branches]
+                    record["selectedIds"] = remaining[:]
+                    if len(remaining) == 1:
+                        break
+                context["nodes"][current] = {"choice": remaining[0], "count": len(criteria)}
+                step["choice"] = remaining[0]
                 current = node["next"]
             elif node["type"] == "filter":
                 items = resolve(node["items"], context)
@@ -341,8 +302,28 @@ def run_flow(flow, inputs, client, trace=None):
                         kept[key] = item
                     else:
                         excluded[key] = [i for i, matched in enumerate(checks) if not matched]
-                context["nodes"][current] = {"items": kept, "criteria": {k: v["description"] for k, v in kept.items()}, "count": len(kept)}
-                step.update(inputCount=len(items), keptIds=list(kept), excluded=excluded)
+                matched_count = len(kept)
+                if "order_by" in node:
+                    # Stable lexicographic ordering, wholly specified by the flow.
+                    # Validate each column before sorting; no coercion or missing-value defaults.
+                    columns = []
+                    for ordering in node["order_by"]:
+                        values = {k: resolve({"$ref": "input." + ordering["field"]}, {"input": v}) for k, v in kept.items()}
+                        require(all(number(v) for v in values.values()) or all(isinstance(v, str) for v in values.values()),
+                                "ordering fields must be uniformly finite numbers or strings")
+                        columns.append((ordering, values))
+                    ordered = list(kept)
+                    for ordering, values in reversed(columns):
+                        ordered.sort(key=values.__getitem__, reverse=ordering["direction"] == "desc")
+                    step["orderedIds"] = ordered[:]
+                    step["orderBy"] = copy.deepcopy(node["order_by"])
+                    if "limit" in node:
+                        step["truncatedIds"] = ordered[node["limit"]:]
+                        ordered = ordered[:node["limit"]]
+                    kept = {k: kept[k] for k in ordered}
+                context["nodes"][current] = {"items": kept, "criteria": {k: v["description"] for k, v in kept.items()},
+                                             "count": len(kept), "ids": list(kept), "matchedCount": matched_count}
+                step.update(inputCount=len(items), matchedCount=matched_count, keptIds=list(kept), excluded=excluded)
                 current = node["next"]
             elif node["type"] == "branch":
                 target = node["default"]
@@ -357,13 +338,17 @@ def run_flow(flow, inputs, client, trace=None):
                 current = target
             else:
                 result = resolve(node["value"], context)
-                step["value"] = result
+                step.update(value=result, status="completed", elapsedMs=round((time.monotonic()-step_started)*1000))
                 trace.update(status="completed", result=result)
                 return result
-            step["next"] = current
+            step.update(status="completed", next=current, elapsedMs=round((time.monotonic()-step_started)*1000))
+            _publish(observer, trace)
         raise FlowError("Node step budget exceeded")
     except Exception as exc:
         trace.update(status="failed", error=str(exc))
+        if trace["steps"] and trace["steps"][-1].get("status") != "completed":
+            trace["steps"][-1].update(status="failed", error=str(exc))
         raise
     finally:
         trace["elapsedMs"] = round((time.monotonic() - started) * 1000)
+        _publish(observer, trace)

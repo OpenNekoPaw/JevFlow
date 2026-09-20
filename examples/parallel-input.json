@@ -1,0 +1,7 @@
+{
+  "objective": "存活并抵达出口",
+  "environment": {"terrain": "狭窄走廊", "exit": "侧面存在可达掩体", "hazards": ["前方燃烧区域"]},
+  "status": {"health": "偏低", "stamina": "足够短距离移动", "effects": []},
+  "items": {"inventory": ["治疗药剂"], "restrictions": ["使用治疗需要短暂无干扰时间"]},
+  "enemies": {"visible": [{"type": "近战敌人", "behavior": "正向本席逼近"}], "unobserved": "未知"}
+}

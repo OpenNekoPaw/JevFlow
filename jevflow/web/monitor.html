@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>JevFlow · 实时监控</title>
+    <link rel="stylesheet" href="/monitor.css" />
+    <link rel="stylesheet" href="/viewer.css" />
+    <script src="/dagre.min.js" defer></script>
+    <script src="/replay.js" defer></script>
+    <script src="/viewer.js" defer></script>
+    <script src="/preview.js" defer></script>
+    <script src="/monitor.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <div>
+        <strong>JevFlow</strong><span class="subtitle">运行监控</span
+        ><span class="readonly">只读</span>
+      </div>
+      <span id="connection" role="status">连接中</span>
+    </header>
+    <main>
+      <nav aria-label="执行任务">
+        <div id="view-modes" class="view-modes" aria-label="查看内容">
+          <button id="mode-runs" type="button" aria-pressed="true">执行 / 回放</button>
+          <button id="mode-config" type="button" aria-pressed="false">配置预览</button>
+        </div>
+        <div id="config-tools" hidden>
+          <h1>打开流程配置</h1>
+          <div id="yaml-drop" class="yaml-drop">
+            <label class="file-label" for="yaml-file">选择 YAML 文件</label>
+            <input id="yaml-file" type="file" accept=".yaml,.yml,text/yaml,application/yaml" />
+            <p class="muted small">或将文件拖到这里 · 最大 1 MiB</p>
+          </div>
+          <p class="muted small">仅发送至当前本地服务校验和绘图，不保存文件、不调用模型。重新选择文件可更新预览。</p>
+          <button id="watch-config" type="button" class="watch-config" hidden>查看服务配置 · 自动刷新</button>
+          <p id="watch-hint" class="muted small"></p>
+        </div>
+        <div id="run-tools">
+        <div class="nav-head">
+          <h1>执行记录</h1>
+          <span id="run-count">0</span>
+        </div>
+        <p class="muted small">选择一次执行，查看固定版本与实时路径。</p>
+        <select id="filter" aria-label="筛选执行状态">
+          <option value="all">全部执行</option>
+          <option value="active">排队 / 执行中</option>
+          <option value="failed">失败 / 取消</option>
+          <option value="completed">已完成</option>
+        </select>
+        <select id="session-filter" aria-label="选择会话">
+          <option value="">全部会话</option>
+        </select>
+        <select id="actor-filter" aria-label="筛选参与者">
+          <option value="">全部参与者</option>
+        </select>
+        <div class="session-controls">
+          <button id="session-play" type="button">回放此会话</button>
+          <button id="session-stop" type="button" hidden>停止连续回放</button>
+          <button id="previous-run" type="button">上次执行</button>
+          <button id="next-run" type="button">下次执行</button>
+        </div>
+        <p id="session-summary" class="muted small"></p>
+        <div id="runs"></div>
+        </div>
+      </nav>
+      <section id="workspace">
+        <div id="config-view" hidden>
+          <div class="run-header"><div><p id="config-source" class="muted small"></p><h2 id="config-name">配置预览</h2></div><span class="badge">尚未执行</span></div>
+          <p id="config-version" class="version"></p>
+          <p id="config-error" role="alert" hidden></p>
+          <p id="config-message" class="muted">选择 YAML 配置文件，即可查看节点、条件、提示词及并行关系。</p>
+          <div id="config-viewer" hidden></div>
+        </div>
+        <div id="execution-view">
+        <div id="empty">
+          <span class="empty-mark">◇</span>
+          <h2>等待 Flow 执行</h2>
+          <p>通过 MCP 调用 run_flow 后，执行记录会自动出现在这里。</p>
+          <p class="muted">此页面只观察任务，不启动模型请求。</p>
+        </div>
+        <div id="run-view" hidden>
+          <div class="run-header">
+            <div>
+              <p id="identity" class="muted small"></p>
+              <h2 id="name"></h2>
+            </div>
+            <span id="status" class="badge"></span>
+          </div>
+          <div id="version" class="version"></div>
+          <div id="metrics" class="metrics"></div>
+          <div id="error" role="alert" hidden></div>
+          <div id="flow-viewer"></div>
+          <details class="panel" open>
+            <summary>模型请求 · 排队与传输</summary>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>节点</th>
+                    <th>状态</th>
+                    <th>队列等待</th>
+                    <th>调用耗时</th>
+                    <th>重试次数</th>
+                  </tr>
+                </thead>
+                <tbody id="requests"></tbody>
+              </table>
+            </div>
+          </details>
+          <details class="panel">
+            <summary>最终结果 / 错误 / trace 路径</summary>
+            <pre id="result"></pre>
+          </details>
+        </div>
+        </div>
+      </section>
+    </main>
+    <footer>
+      实时事件来自同一执行器。结束后的记录固定保存；重新连接自动恢复当前状态。
+    </footer>
+  </body>
+</html>

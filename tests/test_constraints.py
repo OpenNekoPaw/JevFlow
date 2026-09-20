@@ -61,11 +61,12 @@ class ConstraintTests(unittest.TestCase):
         trace={}
         Flow(self.definition).run(self.inputs,MockClient(self.mock),trace)
         output=render(self.definition,trace=trace)
-        self.assertIn('data-node="n0"',output)
+        self.assertIn('id="viewer"',output)
         self.assertIn('premium',output)
         self.assertNotIn('<img src=x',output)
         self.assertIn('候选筛选',output)
-        self.assertIn('flowchart TD',render(self.definition,'mermaid'))
+        self.assertIn('flowchart LR',render(self.definition,'mermaid'))
+        self.assertIn('flowchart TD',render(self.definition,'mermaid',direction='TD'))
         other=copy.deepcopy(self.definition);other['revision']='2'
         with self.assertRaisesRegex(FlowError,'different flow snapshot'):
             render(other,trace=trace)

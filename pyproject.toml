@@ -10,8 +10,14 @@ requires-python = ">=3.9"
 dependencies = ["PyYAML>=6.0,<7"]
 readme = "README.md"
 
+[project.optional-dependencies]
+server = ["mcp>=1.28,<2"]
+
 [project.scripts]
 jevflow = "jevflow.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["jevflow*"]
+
+[tool.setuptools.package-data]
+jevflow = ["web/*.html", "web/*.js", "web/*.css", "web/*.md", "adapters/*.mjs"]

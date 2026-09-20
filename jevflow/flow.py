@@ -4,7 +4,8 @@ import copy
 from pathlib import Path
 from threading import RLock
 
-from .core import load_flow, run_flow, validate_flow
+from .core import _run_snapshot
+from .schema import _read_flow, validate_flow
 
 
 class Flow:
@@ -15,7 +16,7 @@ class Flow:
 
     @classmethod
     def from_file(cls, path):
-        instance = cls(load_flow(path))
+        instance = cls(_read_flow(path))
         instance._path = Path(path).resolve()
         return instance
 
@@ -33,7 +34,8 @@ class Flow:
     def reload(self):
         if self._path is None:
             raise ValueError("reload requires Flow.from_file; use update for an in-memory flow")
-        self.update(load_flow(self._path))
+        self.update(_read_flow(self._path))
 
-    def run(self, inputs, client, trace=None):
-        return run_flow(self.definition, inputs, client, trace=trace)
+    def run(self, inputs, client, trace=None, *, deadline_unix_ms=None, cancel_event=None, observer=None):
+        return _run_snapshot(self.definition, inputs, client, trace=trace,
+                             deadline_unix_ms=deadline_unix_ms, cancel_event=cancel_event, observer=observer)

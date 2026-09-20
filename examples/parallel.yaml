@@ -1,0 +1,67 @@
+version: 1
+name: parallel-game-analysis
+title: 游戏局面并行分析与阶段规划
+locale: zh-CN
+revision: "1"
+limits:
+  max_concurrency: 5
+  max_calls: 5
+  max_steps: 8
+  timeout_seconds: 30
+start: analyze
+nodes:
+  analyze:
+    type: parallel
+    title: 并行分析同一局面
+    branches:
+      environment:
+        title: 环境与行动空间
+        state: {$ref: input.environment}
+        questions:
+          constrained:
+            type: noul
+            instructions: 当前地形与公开危险是否明显限制行动空间？只依据环境信息判断，不猜测未知敌人。
+      status:
+        title: 自身状态与持续能力
+        state: {$ref: input.status}
+        questions:
+          vulnerable:
+            type: noul
+            instructions: 当前生命、体力和异常状态是否难以支撑持续交战？
+      items:
+        title: 物品与恢复能力
+        state: {$ref: input.items}
+        questions:
+          recovery:
+            type: noul
+            instructions: 已有物品是否能在当前使用限制下有效恢复自身状态？不选择具体使用动作。
+      enemies:
+        title: 可见敌人与迫近威胁
+        state: {$ref: input.enemies}
+        questions:
+          imminent:
+            type: noul
+            instructions: 可见敌人的行为是否构成需要立即处理的威胁？未知敌人不作为已确认事实。
+    next: plan
+  plan:
+    type: evaluate
+    title: 汇总判断并规划阶段目标
+    state:
+      objective: {$ref: input.objective}
+      environment: {$ref: nodes.analyze.environment}
+      status: {$ref: nodes.analyze.status}
+      items: {$ref: nodes.analyze.items}
+      enemies: {$ref: nodes.analyze.enemies}
+    questions:
+      tactic:
+        type: choice
+        instructions: 综合四项分析与任务目标，选择当前阶段的策略方向。输出计划，不指定具体操作；概率是判断结果而非已证明事实。
+        criteria:
+          recover: 状态不足且存在恢复机会，优先创造安全恢复条件。
+          reposition: 行动受限或威胁迫近，优先改善位置与生存条件。
+          advance: 当前条件支持继续推进目标，同时保留应对变化的能力。
+    next: result
+  result:
+    type: return
+    value:
+      tactic: {$ref: nodes.plan.tactic.choice}

@@ -168,6 +168,10 @@ class FlowTests(unittest.TestCase):
         with self.assertRaises(FlowError):
             flow.update({})
         self.assertEqual(flow.run({}, MockClient({})), {"revision": "new"})
+        trace = {}
+        flow.run({}, MockClient({}), trace)
+        trace["flow"]["nodes"].clear()
+        self.assertEqual(flow.run({}, MockClient({})), {"revision": "new"})
 
     def test_reload_keeps_old_on_invalid_yaml(self):
         with tempfile.TemporaryDirectory() as tmp:

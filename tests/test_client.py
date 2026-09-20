@@ -3,7 +3,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from jevflow import FlowError, JevClient
+from jevflow import Flow, FlowError, JevClient
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -11,6 +11,8 @@ class Handler(BaseHTTPRequestHandler):
         server = self.server
         server.seen.append({"path": self.path, "authorization": self.headers.get("Authorization"),
                             "body": json.loads(self.rfile.read(int(self.headers["Content-Length"])))})
+        if server.barrier is not None:
+            server.barrier.wait(timeout=3)
         self.send_response(server.response_status)
         self.send_header("Content-Type", "application/json")
         if server.response_status == 302:
@@ -38,6 +40,7 @@ class ClientTests(unittest.TestCase):
 
     def setUp(self):
         self.server.seen = []
+        self.server.barrier = None
         self.server.response_status = 200
         self.server.response_body = json.dumps({"model": "jev-test", "answers": {
             "ready": {"type": "noul", "noul": 0.9}}, "usage": {"input_tokens": 12, "output_tokens": 3}}).encode()
@@ -82,6 +85,19 @@ class ClientTests(unittest.TestCase):
         with self.assertRaisesRegex(FlowError, "TYPESAFE_API_KEY"):
             client.evaluate("input", self.questions)
         self.assertEqual(self.server.seen, [])
+
+    def test_native_client_parallel_http_requests(self):
+        self.server.barrier = threading.Barrier(2)
+        flow = Flow({'version':1, 'name':'http-parallel', 'start':'both', 'nodes':{
+            'both':{'type':'parallel', 'branches':{
+                name:{'state':{'label':name}, 'questions':self.questions} for name in ['left','right']}, 'next':'done'},
+            'done':{'type':'return', 'value':{'$ref':'nodes.both.left.ready.noul'}}}})
+        try:
+            self.assertEqual(flow.run({}, self.client), 0.9)
+        finally:
+            self.server.barrier = None
+        self.assertEqual(len(self.server.seen), 2)
+        self.assertEqual({r['body']['state']['label'] for r in self.server.seen}, {'left','right'})
 
 
 if __name__ == "__main__":
