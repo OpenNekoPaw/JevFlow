@@ -15,6 +15,6 @@ destination.mkdir(parents=True)
 for name in (".codex-plugin", "jevflow", "skills", "scripts", "examples", "adapters"):
     shutil.copytree(source / name, destination / name,
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "node_modules"))
-for name in ("pyproject.toml", "README.md", "README.en.md"):
+for name in ("pyproject.toml", "README.md", "README.en.md", ".mcp.json"):
     shutil.copy2(source / name, destination / name)
 print(destination)

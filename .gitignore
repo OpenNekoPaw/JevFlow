@@ -3,6 +3,14 @@ __pycache__/
 *.egg-info/
 .venv/
 .tmp/
+
+# Generated test reports, traces, and local history
+/reports/
+/test-results/
+/traces/
+/metrics.json
+/.local/history/
+
 .env
 .env.*
 build/

@@ -1,11 +1,12 @@
 {
   "name": "jevflow",
-  "version": "0.1.0+codex.20260919094406",
+  "version": "0.1.0+codex.20260920013210",
   "description": "\u4f7f\u7528 YAML \u7f16\u6392\u5019\u9009\u7ea6\u675f\u4e0e Jev \u51b3\u7b56\uff0c\u63d0\u4f9b\u8f7b\u91cf Python \u6267\u884c\u5668\u3002",
   "author": {
     "name": "Local developer"
   },
   "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "jevflow",
     "shortDescription": "\u7f16\u6392\u548c\u6267\u884c\u8f7b\u91cf Jev \u51b3\u7b56\u6d41\u7a0b",
