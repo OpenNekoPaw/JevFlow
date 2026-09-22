@@ -48,7 +48,7 @@ nodes:
 
 This MVP uses text instructions and descriptions, a subset of the native API. Noul has no separate confidence. Choice probabilities compare competing options, not game win probabilities. Score measures degree; a noul of 0.5 means uncertainty, not medium severity. Native extra fields such as score `legend` remain in response traces.
 
-`branch`: nonempty ordered `cases`, each with `left`, `op`, `right`, `next`; mandatory `default`. First matching case wins. Operators: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`. Ordered comparisons require numbers; booleans are not numbers. Use consecutive branches for compound conditions.
+`branch`: nonempty ordered `cases`, each with `left`, `op`, `right`, `next`; mandatory `default`. First matching case wins. Operators: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`, `not_contains`. Membership operators require an array on the left and compare complete elements using the same equality semantics as `eq`; they do not match substrings or dictionary keys. Ordered comparisons require numbers; booleans are not numbers. Use consecutive branches for compound conditions.
 
 `return`: `value` is JSON-compatible data, optionally with references. It ends the flow. An `agent_review` return is just data: the host decides whether to invoke an agent.
 
@@ -99,7 +99,7 @@ result: {$ref: nodes.evaluate.positive.noul}
 
 ## Candidate filter / 候选约束
 
-Every node accepts an optional display `title`. A `filter` has `items`, nonempty `where`, and `next`. Items are a mapping of candidate ID to JSON object with a nonempty `description` string. Each predicate uses a dotted item `field`, `op` (`eq/ne/gt/gte/lt/lte`), and `value` (literal or `$ref`). All predicates must match. A missing fact is an error, not an implicit pass.
+Every node accepts an optional display `title`. A `filter` has `items`, nonempty `where`, and `next`. Items are a mapping of candidate ID to JSON object with a nonempty `description` string. Each predicate uses a dotted item `field`, `op` (`eq/ne/gt/gte/lt/lte/contains/not_contains`), and `value` (literal or `$ref`). All predicates must match. A missing fact is an error, not an implicit pass.
 
 ```yaml
 eligible:

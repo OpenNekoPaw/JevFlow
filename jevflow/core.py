@@ -30,6 +30,10 @@ def resolve(value, context):
 
 
 def compare(left, op, right):
+    if op in ("contains", "not_contains"):
+        require(isinstance(left, list), "Membership comparisons require an array on the left")
+        found = any(compare(item, "eq", right) for item in left)
+        return found if op == "contains" else not found
     if op in ("eq", "ne"):
         equal = (type(left) is type(right) or (number(left) and number(right))) and left == right
         return equal if op == "eq" else not equal

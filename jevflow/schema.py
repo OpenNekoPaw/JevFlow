@@ -28,7 +28,7 @@ def _mapping(loader, node):
 
 UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _mapping)
 NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
-OPS = {"eq", "ne", "gt", "gte", "lt", "lte"}
+OPS = {"eq", "ne", "gt", "gte", "lt", "lte", "contains", "not_contains"}
 
 
 def require(condition, message):
