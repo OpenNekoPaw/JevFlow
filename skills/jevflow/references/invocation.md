@@ -18,6 +18,18 @@ jevflow run flow.yaml --input - --provider gateway --attempt-timeout 5 --max-ret
 
 `--max-concurrency` 默认 5，是该入口的模型调用上限，可调高；实际并发同时受 YAML `limits.max_concurrency` 限制。结果写 stdout，成功退出 0、失败退出 1、参数错误退出 2。`test`、`stats`、`visualize` 命令继续可用。
 
+## Optional AI Gateway / 可选 Gateway
+
+Gateway requires Node.js and a host-installed SDK / Gateway 需要 Node.js 与宿主安装的 SDK：
+
+```sh
+npm install --prefix "$HOME/.local/share/jevflow/ai-gateway" --save-exact ai@7.0.106
+```
+
+Set `AI_GATEWAY_API_KEY` in the process environment, then use `--provider gateway`. `JEVFLOW_GATEWAY_HOME` overrides the SDK directory. The Node bridge is bundled with the Python package; no extra bridge installation is required.
+
+在进程环境中配置 `AI_GATEWAY_API_KEY`，运行时使用 `--provider gateway`。可用 `JEVFLOW_GATEWAY_HOME` 覆盖 SDK 目录。Node 桥接脚本随 Python 包发布，无需另外安装。
+
 ## Server：本地常驻 stdio MCP
 
 使用 Python 3.10+，在宿主环境安装可选依赖：

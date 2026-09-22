@@ -1,0 +1,1576 @@
+version: 1
+name: doudizhu-default-strategy
+locale: zh-CN
+title: 斗地主 Jev 决策网络：并行研判 → 身份代价取舍 → 限定执行
+revision: '25'
+limits:
+  max_steps: 256
+  max_calls: null
+  timeout_seconds: 42
+  max_concurrency: 5
+start: assess
+nodes:
+  assess:
+    type: parallel
+    title: 并行研判：确定收尾入口与身份路线目标
+    branches:
+      entry_judgment:
+        title: Jev：阶段身份与确定收尾路线
+        state:
+          phase:
+            $ref: input.phase
+          role:
+            $ref: input.role
+          roleContext:
+            $ref: input.situation.roleContext
+          finishEvidence:
+            $ref: input.finishEvidence
+          passConsequence:
+            $ref: input.situation.passConsequence
+          finishAvailability:
+            $ref: input.situation.routeSummary
+          publicCardEvidence:
+            $ref: input.situation.publicLedger
+        questions:
+          route:
+            type: choice
+            instructions: 依据输入中已确定的阶段和身份选择本轮入口。bid 阶段只进入叫抢，不能提前指定地主；play 阶段严格使用给定身份，不能因牌力强弱改变身份。信息矛盾选 unresolved。这里只判断策略入口，不选择动作。
+            criteria:
+              bid: 当前是叫抢阶段
+              landlord: 当前是出牌阶段，本席地主
+              upstream: 当前是出牌阶段，本席地主上家
+              downstream: 当前是出牌阶段，本席地主下家
+              unresolved: 阶段或身份证据不足或矛盾
+          resolution:
+            type: choice
+            instructions: 只判断已有证据能否让本方确定赢下本局，不判断普通保牌、拦截或让牌偏好。finishAvailability 给出规则模块对完整合法候选的证明结果，finishEvidence 提供对应动作、余牌和公开响应见证；交叉核对后选择成立的收尾路线。immediate
+              是本次直接出完；sequence 是本次无法被压、取得下一次领牌后余牌能一手出完；team 是不要后队友取得领牌并用最后一张出完。若能立即出完，不必再为后续牌权担心；公开证明连续出完也不因耗高牌或压队友而失去获胜价值。ordinary
+              表示没有可证实的收尾机会，不能仅因为还想比较普通代价就选 ordinary。bid 阶段选择 ordinary；不能从仅有大牌、低手数或对手少牌臆测确定获胜。这里只判断路线类型，不选择具体牌。
+            criteria:
+              immediate: 采用 immediate 中本次合法出完的路线
+              sequence: 采用 sequence 中公开证据证明的连续收尾路线
+              team: 采用 team 中让队友确定出完的路线
+              ordinary: 没有已证实的即时、连续或队友收尾路线（或当前叫抢阶段），需要普通策略判断
+      goal_compare:
+        title: Jev：身份职责与本轮主动权目标
+        state:
+          phase:
+            $ref: input.phase
+          role:
+            $ref: input.role
+          rolePolicy:
+            $ref: input.rolePolicy
+          position:
+            roleContext:
+              $ref: input.situation.roleContext
+            counts:
+              $ref: input.situation.counts
+            actualLead:
+              $ref: input.situation.actualLead
+            lastPlay:
+              $ref: input.situation.lastPlay
+            passCount:
+              $ref: input.situation.passCount
+            followingTeammate:
+              $ref: input.situation.followingTeammate
+            teammateLeadUnbeatable:
+              $ref: input.situation.teammateLeadUnbeatable
+            passConsequence:
+              $ref: input.situation.passConsequence
+          publicEvidence:
+            currentEnemyResponses:
+              $ref: input.situation.currentEnemyResponses
+            publicLedger:
+              $ref: input.situation.publicLedger
+            publicProgress:
+              $ref: input.situation.publicProgress
+          routeAvailability:
+            $ref: input.situation.routeTradeoffs
+          policy:
+            core:
+              $ref: input.strategies.core
+            general:
+              $ref: input.strategies.general
+            control:
+              $ref: input.strategies.control
+            weak:
+              $ref: input.strategies.weak
+            cooperation:
+              $ref: input.strategies.cooperation
+            endgame:
+              $ref: input.strategies.endgame
+          ownRoutes:
+            ownRankCounts:
+              $ref: input.situation.ownRankCounts
+            handRoutes:
+              $ref: input.situation.handRoutes
+          positionTasks:
+            landlord: 本席独自获胜，分别检查两名农民的剩余牌与响应，不把他们当作本席队友。比较当前推进与后续夺权来源，不能只关注余牌最少的农民。
+            upstream: 本席行动后紧接地主。跟队友牌时本席是第一响应者，不要会给地主响应机会；跟地主牌时队友已经不要，本席是最后响应者。领小牌或接管队友前，比较地主减牌风险及改变牌型的收益；不机械顶大牌。
+            downstream: 地主行动后紧接本席。跟地主牌时本席首先响应，队友仍有后续机会；跟队友牌时地主已不要，本席不要即可归还队友领牌权。主动领牌后队友先于地主响应；判断自己推进、有效拦截和队友接力的实际收益。
+        questions:
+          decision:
+            type: choice
+            instructions: 严格按给定 role 使用对应 positionTasks 和 rolePolicy，未分配身份的叫抢阶段用 structure 表示待评估。只判断本轮优先目标，不选择牌或批准代价。control
+              用于必要拦截或有价值的接管；structure 用于减轻弱项与推进完整路线；hold 是让牌倾向，下一节点仍须审核过牌后果与可用接牌代价。对手少牌不是确定持牌；无法保证夺权不等于应放弃低成本跟牌。牌型保护服从有效阻止对方收尾。
+              立即出完、公开证明的连续出完与队友出完证据也由你判断其优先级，没有程序自动收尾；需要推进此类路线时选择 structure。
+            criteria:
+              control: 当前阻断或争取牌权收益优先，下一节点审核为此消耗资源是否值得。
+              structure: 当前推进余牌路线优先，下一节点审核损耗；不以一次出牌张数最多代替后续路线。
+              hold: 暂倾向保留手牌或让队友继续；须由下一节点比较实际不要后果后决定。
+    next: entry_route
+  entry_route:
+    type: branch
+    title: 按 Jev 入口答案流转
+    cases:
+    - left:
+        $ref: nodes.assess.entry_judgment.route.choice
+      op: eq
+      right: bid
+      next: bid_plan_choice
+    - left:
+        $ref: nodes.assess.entry_judgment.route.choice
+      op: eq
+      right: unresolved
+      next: unresolved
+    - left:
+        $ref: nodes.assess.entry_judgment.resolution.choice
+      op: eq
+      right: immediate
+      next: immediate_candidates
+    - left:
+        $ref: nodes.assess.entry_judgment.resolution.choice
+      op: eq
+      right: sequence
+      next: sequence_candidates
+    - left:
+        $ref: nodes.assess.entry_judgment.resolution.choice
+      op: eq
+      right: team
+      next: team_candidates
+    - left:
+        $ref: nodes.assess.entry_judgment.route.choice
+      op: eq
+      right: landlord
+      next: landlord_cost_compare
+    - left:
+        $ref: nodes.assess.entry_judgment.route.choice
+      op: eq
+      right: upstream
+      next: upstream_cost_compare
+    - left:
+        $ref: nodes.assess.entry_judgment.route.choice
+      op: eq
+      right: downstream
+      next: downstream_cost_compare
+    default: unresolved
+  bid_plan_choice:
+    type: select
+    title: 叫抢价值选择：选择动作
+    state:
+      evidence:
+        $ref: input.state
+      plan:
+        role:
+          $ref: input.role
+        tactic: bid
+        title: 叫抢价值评估
+        objective: 综合完整组合、弱牌负担、预计手数与控制来源评估是否承担地主责任；抢与反抢重新评估，不因已有一次选择而承诺后续。
+        strategy:
+          core:
+            $ref: input.strategies.core
+          bid:
+            $ref: input.strategies.bid
+    criteria:
+      $ref: input.bidCriteria
+    instructions: 仅判断当前叫抢阶段是否承担地主责任：结合已成组合、弱牌负担与控制来源，选择合法叫抢值。不规划出牌，不依赖上一次调用的记忆。
+    batch_size: 32
+    next: bid_plan_result
+  bid_plan_result:
+    type: return
+    title: 叫抢价值选择：返回结果
+    value:
+      candidate:
+        $ref: nodes.bid_plan_choice.choice
+      source: flow
+      plan:
+        role:
+          $ref: input.role
+        tactic: bid
+        title: 叫抢价值评估
+        objective: 综合完整组合、弱牌负担、预计手数与控制来源评估是否承担地主责任；抢与反抢重新评估，不因已有一次选择而承诺后续。
+        strategy:
+          core:
+            $ref: input.strategies.core
+          bid:
+            $ref: input.strategies.bid
+      inputCount:
+        $ref: input.candidateCount
+      candidateCount:
+        $ref: input.candidateCount
+  landlord_cost_compare:
+    type: evaluate
+    title: 地主：收益是否值得付出代价
+    state:
+      role:
+        $ref: input.role
+      rolePolicy:
+        $ref: input.rolePolicy
+      situation:
+        role:
+          $ref: input.situation.role
+        roleContext:
+          $ref: input.situation.roleContext
+        counts:
+          $ref: input.situation.counts
+        actualLead:
+          $ref: input.situation.actualLead
+        passCount:
+          $ref: input.situation.passCount
+        followingTeammate:
+          $ref: input.situation.followingTeammate
+        teammateLeadUnbeatable:
+          $ref: input.situation.teammateLeadUnbeatable
+        currentEnemyResponses:
+          $ref: input.situation.currentEnemyResponses
+        minimumEnemyCount:
+          $ref: input.situation.minimumEnemyCount
+        lastPlay:
+          $ref: input.situation.lastPlay
+        ownRankCounts:
+          $ref: input.situation.ownRankCounts
+        publicLedger:
+          $ref: input.situation.publicLedger
+        handRoutes:
+          $ref: input.situation.handRoutes
+        publicProgress:
+          $ref: input.situation.publicProgress
+        routeTradeoffs:
+          $ref: input.situation.routeTradeoffs
+        routeSummary:
+          $ref: input.situation.routeSummary
+        interpretation:
+          $ref: input.situation.interpretation
+        passConsequence:
+          $ref: input.situation.passConsequence
+      policy:
+        core:
+          $ref: input.strategies.core
+        attachments:
+          $ref: input.strategies.attachments
+        weak:
+          $ref: input.strategies.weak
+        control:
+          $ref: input.strategies.control
+        cooperation:
+          $ref: input.strategies.cooperation
+        endgame:
+          $ref: input.strategies.endgame
+        general:
+          $ref: input.strategies.general
+      previousJudgment:
+        $ref: nodes.assess.goal_compare.decision
+      scope: 所有实际代价组均提供，无支配或风险预筛。根据本身份目标、完整路线和不要后果批准一组代价；下一节点只能在批准范围内选择动作。
+      availableCostProfiles:
+        $ref: input.jevCostProfiles
+      positionTask: 为阻止任一农民收尾或改善自身后续路线承担代价；比较保留控制牌与本轮使用之后的继续出手机会。
+      legalActionCount:
+        $ref: input.candidateCount
+      finishEvidence:
+        $ref: input.finishEvidence
+    questions:
+      budget:
+        type: choice
+        instructions: 为阻止任一农民收尾或改善自身后续路线承担代价；比较保留控制牌与本轮使用之后的继续出手机会。 选择当前收益值得承担的一组实际代价，或明确不要。遵守：阻止敌方即将出完 > 改善本方路线 > 同等收益保结构和控制。普通跟牌若必须拆长组合、炸弹或耗唯一高控而收益不足，可选
+          hold；不能为保牌放任敌手下一手出完。必要拦截允许增加拆分手数、消耗高牌或炸弹；对手“可能一手响应”是风险而非确定失败，须与不要的风险比较，不能一票否决。己方领牌不能不要；没有低成本组合时比较实际可行路线，不要求零代价。队友领先仍按座次检查让牌后果。若多组都能完成目标，优先代价更小者；此前目标只是倾向，若证据显示接牌不值，可明确改选
+          hold。不要把组合内某一项最优值当作同一动作的全部属性；无法作出有依据的取舍才选 unresolved。 组合未被程序预先判为安全；保留双王、确定收尾、必要拦截及不要风险均由你综合判断，不把输入风险事实当成程序禁令。 先比较各组
+          outcomes 所说明的实际获胜收益，再比较资源代价；零消耗不是目标本身。无法保证最终获胜不等于证据不足。若唯一合法动作是不要，它仍是本轮合法响应，即使局面不利；unresolved 仅表示输入矛盾或无法解释的证据缺失。
+        criteria:
+          $ref: input.jevCostProfiles
+    next: landlord_resolve
+  landlord_resolve:
+    type: branch
+    title: 地主：按 Jev 目标与代价答案流转
+    cases:
+    - left:
+        $ref: nodes.landlord_cost_compare.budget.choice
+      op: eq
+      right: unresolved
+      next: unresolved
+    - left:
+        $ref: nodes.landlord_cost_compare.budget.choice
+      op: eq
+      right: hold
+      next: landlord_pass_candidates
+    - left:
+        $ref: nodes.assess.goal_compare.decision.choice
+      op: eq
+      right: control
+      next: landlord_control_candidates
+    default: landlord_structure_candidates
+  landlord_control_candidates:
+    type: filter
+    title: 地主：仅落实 Jev 批准的候选范围
+    items:
+      $ref: input.jevDecisionCandidates
+    where:
+    - field: costProfile
+      op: eq
+      value:
+        $ref: nodes.landlord_cost_compare.budget.choice
+    next: landlord_control_choice
+  landlord_control_choice:
+    type: select
+    title: 地主：Jev 在批准范围内判断有效拦截与牌权
+    state:
+      role:
+        $ref: input.role
+      rolePolicy:
+        $ref: input.rolePolicy
+      situation:
+        role:
+          $ref: input.situation.role
+        roleContext:
+          $ref: input.situation.roleContext
+        counts:
+          $ref: input.situation.counts
+        actualLead:
+          $ref: input.situation.actualLead
+        passCount:
+          $ref: input.situation.passCount
+        followingTeammate:
+          $ref: input.situation.followingTeammate
+        teammateLeadUnbeatable:
+          $ref: input.situation.teammateLeadUnbeatable
+        currentEnemyResponses:
+          $ref: input.situation.currentEnemyResponses
+        minimumEnemyCount:
+          $ref: input.situation.minimumEnemyCount
+        lastPlay:
+          $ref: input.situation.lastPlay
+        ownRankCounts:
+          $ref: input.situation.ownRankCounts
+        publicLedger:
+          $ref: input.situation.publicLedger
+        handRoutes:
+          $ref: input.situation.handRoutes
+        publicProgress:
+          $ref: input.situation.publicProgress
+        routeTradeoffs:
+          $ref: input.situation.routeTradeoffs
+        routeSummary:
+          $ref: input.situation.routeSummary
+        interpretation:
+          $ref: input.situation.interpretation
+        passConsequence:
+          $ref: input.situation.passConsequence
+      candidateEvidenceColumns:
+        $ref: input.jevDecisionColumns
+      goalJudgment:
+        $ref: nodes.assess.goal_compare.decision
+      costJudgment:
+        $ref: nodes.landlord_cost_compare.budget
+      policy:
+        core:
+          $ref: input.strategies.core
+        general:
+          $ref: input.strategies.general
+        weak:
+          $ref: input.strategies.weak
+        control:
+          $ref: input.strategies.control
+        cooperation:
+          $ref: input.strategies.cooperation
+        endgame:
+          $ref: input.strategies.endgame
+        attachments:
+          $ref: input.strategies.attachments
+    criteria:
+      $ref: nodes.landlord_control_candidates.criteria
+    instructions: 仅在已批准的候选内判断哪条响应路线有实际拦截或接管收益。比较接住后余牌、被压后恢复能力与团队收益；能压过不等于值得消耗高控。 每个候选显式给出收尾证据和余牌点数。对结构相同、推进手数相近的候选，比较是否带走原有弱单而保留独立对子；不要因本次张数更多就带走高对子留下小单。这些是取舍依据，由你判断，不是程序排序或禁令。
+    batch_size: 255
+    next: landlord_control_result
+  landlord_control_result:
+    type: return
+    title: 地主：返回拦截／牌权动作
+    value:
+      candidate:
+        $ref: nodes.landlord_control_choice.choice
+      source: flow
+      plan:
+        role:
+          $ref: input.role
+        tactic: control
+        goalJudgment:
+          $ref: nodes.assess.goal_compare.decision
+        costJudgment:
+          $ref: nodes.landlord_cost_compare.budget
+        routeRole: landlord
+      inputCount:
+        $ref: input.candidateCount
+      candidateCount:
+        $ref: nodes.landlord_control_choice.count
+  landlord_structure_candidates:
+    type: filter
+    title: 地主：仅落实 Jev 批准的候选范围
+    items:
+      $ref: input.jevDecisionCandidates
+    where:
+    - field: costProfile
+      op: eq
+      value:
+        $ref: nodes.landlord_cost_compare.budget.choice
+    next: landlord_structure_choice
+  landlord_structure_choice:
+    type: select
+    title: 地主：Jev 在批准范围内判断完整路线与收尾
+    state:
+      role:
+        $ref: input.role
+      rolePolicy:
+        $ref: input.rolePolicy
+      situation:
+        role:
+          $ref: input.situation.role
+        roleContext:
+          $ref: input.situation.roleContext
+        counts:
+          $ref: input.situation.counts
+        actualLead:
+          $ref: input.situation.actualLead
+        passCount:
+          $ref: input.situation.passCount
+        followingTeammate:
+          $ref: input.situation.followingTeammate
+        teammateLeadUnbeatable:
+          $ref: input.situation.teammateLeadUnbeatable
+        currentEnemyResponses:
+          $ref: input.situation.currentEnemyResponses
+        minimumEnemyCount:
+          $ref: input.situation.minimumEnemyCount
+        lastPlay:
+          $ref: input.situation.lastPlay
+        ownRankCounts:
+          $ref: input.situation.ownRankCounts
+        publicLedger:
+          $ref: input.situation.publicLedger
+        handRoutes:
+          $ref: input.situation.handRoutes
+        publicProgress:
+          $ref: input.situation.publicProgress
+        routeTradeoffs:
+          $ref: input.situation.routeTradeoffs
+        routeSummary:
+          $ref: input.situation.routeSummary
+        interpretation:
+          $ref: input.situation.interpretation
+        passConsequence:
+          $ref: input.situation.passConsequence
+      candidateEvidenceColumns:
+        $ref: input.jevDecisionColumns
+      goalJudgment:
+        $ref: nodes.assess.goal_compare.decision
+      costJudgment:
+        $ref: nodes.landlord_cost_compare.budget
+      policy:
+        core:
+          $ref: input.strategies.core
+        general:
+          $ref: input.strategies.general
+        weak:
+          $ref: input.strategies.weak
+        control:
+          $ref: input.strategies.control
+        cooperation:
+          $ref: input.strategies.cooperation
+        endgame:
+          $ref: input.strategies.endgame
+        attachments:
+          $ref: input.strategies.attachments
+    criteria:
+      $ref: nodes.landlord_structure_candidates.criteria
+    instructions: 仅在已批准的候选内比较完整路线、确定收尾和团队接力。优先合法立即出完；比较本次能否继续取得出手机会，不机械保留控制组合、不固定最小点数或最多张数。 每个候选显式给出收尾证据和余牌点数。对结构相同、推进手数相近的候选，比较是否带走原有弱单而保留独立对子；不要因本次张数更多就带走高对子留下小单。这些是取舍依据，由你判断，不是程序排序或禁令。
+    batch_size: 255
+    next: landlord_structure_result
+  landlord_structure_result:
+    type: return
+    title: 地主：返回路线推进动作
+    value:
+      candidate:
+        $ref: nodes.landlord_structure_choice.choice
+      source: flow
+      plan:
+        role:
+          $ref: input.role
+        tactic: structure
+        goalJudgment:
+          $ref: nodes.assess.goal_compare.decision
+        costJudgment:
+          $ref: nodes.landlord_cost_compare.budget
+        routeRole: landlord
+      inputCount:
+        $ref: input.candidateCount
+      candidateCount:
+        $ref: nodes.landlord_structure_choice.count
+  landlord_pass_candidates:
+    type: filter
+    title: 地主：仅落实 Jev 批准的候选范围
+    items:
+      $ref: input.jevDecisionCandidates
+    where:
+    - field: costProfile
+      op: eq
+      value:
+        $ref: nodes.landlord_cost_compare.budget.choice
+    next: landlord_pass_choice
+  landlord_pass_choice:
+    type: select
+    title: 地主：Jev 在批准范围内判断明确不要
+    state:
+      role:
+        $ref: input.role
+      rolePolicy:
+        $ref: input.rolePolicy
+      situation:
+        role:
+          $ref: input.situation.role
+        roleContext:
+          $ref: input.situation.roleContext
+        counts:
+          $ref: input.situation.counts
+        actualLead:
+          $ref: input.situation.actualLead
+        passCount:
+          $ref: input.situation.passCount
+        followingTeammate:
+          $ref: input.situation.followingTeammate
+        teammateLeadUnbeatable:
+          $ref: input.situation.teammateLeadUnbeatable
+        currentEnemyResponses:
+          $ref: input.situation.currentEnemyResponses
+        minimumEnemyCount:
+          $ref: input.situation.minimumEnemyCount
+        lastPlay:
+          $ref: input.situation.lastPlay
+        ownRankCounts:
+          $ref: input.situation.ownRankCounts
+        publicLedger:
+          $ref: input.situation.publicLedger
+        handRoutes:
+          $ref: input.situation.handRoutes
+        publicProgress:
+          $ref: input.situation.publicProgress
+        routeTradeoffs:
+          $ref: input.situation.routeTradeoffs
+        routeSummary:
+          $ref: input.situation.routeSummary
+        interpretation:
+          $ref: input.situation.interpretation
+        passConsequence:
+          $ref: input.situation.passConsequence
+      candidateEvidenceColumns:
+        $ref: input.jevDecisionColumns
+      goalJudgment:
+        $ref: nodes.assess.goal_compare.decision
+      costJudgment:
+        $ref: nodes.landlord_cost_compare.budget
+      policy:
+        core:
+          $ref: input.strategies.core
+        general:
+          $ref: input.strategies.general
+        weak:
+          $ref: input.strategies.weak
+        control:
+          $ref: input.strategies.control
+        cooperation:
+          $ref: input.strategies.cooperation
+        endgame:
+          $ref: input.strategies.endgame
+        attachments:
+          $ref: input.strategies.attachments
+    criteria:
+      $ref: nodes.landlord_pass_candidates.criteria
+    instructions: 只处理上游已经明确批准的不要候选，不恢复任何被排除动作。 每个候选显式给出收尾证据和余牌点数。对结构相同、推进手数相近的候选，比较是否带走原有弱单而保留独立对子；不要因本次张数更多就带走高对子留下小单。这些是取舍依据，由你判断，不是程序排序或禁令。
+    batch_size: 255
+    next: landlord_pass_result
+  landlord_pass_result:
+    type: return
+    title: 地主：返回明确让牌
+    value:
+      candidate:
+        $ref: nodes.landlord_pass_choice.choice
+      source: flow
+      plan:
+        role:
+          $ref: input.role
+        tactic: hold
+        goalJudgment:
+          $ref: nodes.assess.goal_compare.decision
+        costJudgment:
+          $ref: nodes.landlord_cost_compare.budget
+        routeRole: landlord
+      inputCount:
+        $ref: input.candidateCount
+      candidateCount:
+        $ref: nodes.landlord_pass_choice.count
+  upstream_cost_compare:
+    type: evaluate
+    title: 地主上家：收益是否值得付出代价
+    state:
+      role:
+        $ref: input.role
+      rolePolicy:
+        $ref: input.rolePolicy
+      situation:
+        role:
+          $ref: input.situation.role
+        roleContext:
+          $ref: input.situation.roleContext
+        counts:
+          $ref: input.situation.counts
+        actualLead:
+          $ref: input.situation.actualLead
+        passCount:
+          $ref: input.situation.passCount
+        followingTeammate:
+          $ref: input.situation.followingTeammate
+        teammateLeadUnbeatable:
+          $ref: input.situation.teammateLeadUnbeatable
+        currentEnemyResponses:
+          $ref: input.situation.currentEnemyResponses
+        minimumEnemyCount:
+          $ref: input.situation.minimumEnemyCount
+        lastPlay:
+          $ref: input.situation.lastPlay
+        ownRankCounts:
+          $ref: input.situation.ownRankCounts
+        publicLedger:
+          $ref: input.situation.publicLedger
+        handRoutes:
+          $ref: input.situation.handRoutes
+        publicProgress:
+          $ref: input.situation.publicProgress
+        routeTradeoffs:
+          $ref: input.situation.routeTradeoffs
+        routeSummary:
+          $ref: input.situation.routeSummary
+        interpretation:
+          $ref: input.situation.interpretation
+        passConsequence:
+          $ref: input.situation.passConsequence
+      policy:
+        core:
+          $ref: input.strategies.core
+        attachments:
+          $ref: input.strategies.attachments
+        weak:
+          $ref: input.strategies.weak
+        control:
+          $ref: input.strategies.control
+        cooperation:
+          $ref: input.strategies.cooperation
+        endgame:
+          $ref: input.strategies.endgame
+        general:
+          $ref: input.strategies.general
+      previousJudgment:
+        $ref: nodes.assess.goal_compare.decision
+      scope: 所有实际代价组均提供，无支配或风险预筛。根据本身份目标、完整路线和不要后果批准一组代价；下一节点只能在批准范围内选择动作。
+      availableCostProfiles:
+        $ref: input.jevCostProfiles
+      positionTask: 不要跟队友牌并不直接归还队友领牌权；比较地主下一次响应、接管代价与完整组合推进。必要拦截可以付出代价，但不能只为提高点数消耗控制。
+      legalActionCount:
+        $ref: input.candidateCount
+      finishEvidence:
+        $ref: input.finishEvidence
+    questions:
+      budget:
+        type: choice
+        instructions: 不要跟队友牌并不直接归还队友领牌权；比较地主下一次响应、接管代价与完整组合推进。必要拦截可以付出代价，但不能只为提高点数消耗控制。 选择当前收益值得承担的一组实际代价，或明确不要。遵守：阻止敌方即将出完
+          > 改善本方路线 > 同等收益保结构和控制。普通跟牌若必须拆长组合、炸弹或耗唯一高控而收益不足，可选 hold；不能为保牌放任敌手下一手出完。必要拦截允许增加拆分手数、消耗高牌或炸弹；对手“可能一手响应”是风险而非确定失败，须与不要的风险比较，不能一票否决。己方领牌不能不要；没有低成本组合时比较实际可行路线，不要求零代价。队友领先仍按座次检查让牌后果。若多组都能完成目标，优先代价更小者；此前目标只是倾向，若证据显示接牌不值，可明确改选
+          hold。不要把组合内某一项最优值当作同一动作的全部属性；无法作出有依据的取舍才选 unresolved。 组合未被程序预先判为安全；保留双王、确定收尾、必要拦截及不要风险均由你综合判断，不把输入风险事实当成程序禁令。 先比较各组
+          outcomes 所说明的实际获胜收益，再比较资源代价；零消耗不是目标本身。无法保证最终获胜不等于证据不足。若唯一合法动作是不要，它仍是本轮合法响应，即使局面不利；unresolved 仅表示输入矛盾或无法解释的证据缺失。
+        criteria:
+          $ref: input.jevCostProfiles
+    next: upstream_resolve
+  upstream_resolve:
+    type: branch
+    title: 地主上家：按 Jev 目标与代价答案流转
+    cases:
+    - left:
+        $ref: nodes.upstream_cost_compare.budget.choice
+      op: eq
+      right: unresolved
+      next: unresolved
+    - left:
+        $ref: nodes.upstream_cost_compare.budget.choice
+      op: eq
+      right: hold
+      next: upstream_pass_candidates
+    - left:
+        $ref: nodes.assess.goal_compare.decision.choice
+      op: eq
+      right: control
+      next: upstream_control_candidates
+    default: upstream_structure_candidates
+  upstream_control_candidates:
+    type: filter
+    title: 地主上家：仅落实 Jev 批准的候选范围
+    items:
+      $ref: input.jevDecisionCandidates
+    where:
+    - field: costProfile
+      op: eq
+      value:
+        $ref: nodes.upstream_cost_compare.budget.choice
+    next: upstream_control_choice
+  upstream_control_choice:
+    type: select
+    title: 地主上家：Jev 在批准范围内判断有效拦截与牌权
+    state:
+      role:
+        $ref: input.role
+      rolePolicy:
+        $ref: input.rolePolicy
+      situation:
+        role:
+          $ref: input.situation.role
+        roleContext:
+          $ref: input.situation.roleContext
+        counts:
+          $ref: input.situation.counts
+        actualLead:
+          $ref: input.situation.actualLead
+        passCount:
+          $ref: input.situation.passCount
+        followingTeammate:
+          $ref: input.situation.followingTeammate
+        teammateLeadUnbeatable:
+          $ref: input.situation.teammateLeadUnbeatable
+        currentEnemyResponses:
+          $ref: input.situation.currentEnemyResponses
+        minimumEnemyCount:
+          $ref: input.situation.minimumEnemyCount
+        lastPlay:
+          $ref: input.situation.lastPlay
+        ownRankCounts:
+          $ref: input.situation.ownRankCounts
+        publicLedger:
+          $ref: input.situation.publicLedger
+        handRoutes:
+          $ref: input.situation.handRoutes
+        publicProgress:
+          $ref: input.situation.publicProgress
+        routeTradeoffs:
+          $ref: input.situation.routeTradeoffs
+        routeSummary:
+          $ref: input.situation.routeSummary
+        interpretation:
+          $ref: input.situation.interpretation
+        passConsequence:
+          $ref: input.situation.passConsequence
+      candidateEvidenceColumns:
+        $ref: input.jevDecisionColumns
+      goalJudgment:
+        $ref: nodes.assess.goal_compare.decision
+      costJudgment:
+        $ref: nodes.upstream_cost_compare.budget
+      policy:
+        core:
+          $ref: input.strategies.core
+        general:
+          $ref: input.strategies.general
+        weak:
+          $ref: input.strategies.weak
+        control:
+          $ref: input.strategies.control
+        cooperation:
+          $ref: input.strategies.cooperation
+        endgame:
+          $ref: input.strategies.endgame
+        attachments:
+          $ref: input.strategies.attachments
+    criteria:
+      $ref: nodes.upstream_control_candidates.criteria
+    instructions: 仅在已批准的候选内判断哪条响应路线有实际拦截或接管收益。比较接住后余牌、被压后恢复能力与团队收益；能压过不等于值得消耗高控。 每个候选显式给出收尾证据和余牌点数。对结构相同、推进手数相近的候选，比较是否带走原有弱单而保留独立对子；不要因本次张数更多就带走高对子留下小单。这些是取舍依据，由你判断，不是程序排序或禁令。
+    batch_size: 255
+    next: upstream_control_result
+  upstream_control_result:
+    type: return
+    title: 地主上家：返回拦截／牌权动作
+    value:
+      candidate:
+        $ref: nodes.upstream_control_choice.choice
+      source: flow
+      plan:
+        role:
+          $ref: input.role
+        tactic: control
+        goalJudgment:
+          $ref: nodes.assess.goal_compare.decision
+        costJudgment:
+          $ref: nodes.upstream_cost_compare.budget
+        routeRole: upstream
+      inputCount:
+        $ref: input.candidateCount
+      candidateCount:
+        $ref: nodes.upstream_control_choice.count
+  upstream_structure_candidates:
+    type: filter
+    title: 地主上家：仅落实 Jev 批准的候选范围
+    items:
+      $ref: input.jevDecisionCandidates
+    where:
+    - field: costProfile
+      op: eq
+      value:
+        $ref: nodes.upstream_cost_compare.budget.choice
+    next: upstream_structure_choice
+  upstream_structure_choice:
+    type: select
+    title: 地主上家：Jev 在批准范围内判断完整路线与收尾
+    state:
+      role:
+        $ref: input.role
+      rolePolicy:
+        $ref: input.rolePolicy
+      situation:
+        role:
+          $ref: input.situation.role
+        roleContext:
+          $ref: input.situation.roleContext
+        counts:
+          $ref: input.situation.counts
+        actualLead:
+          $ref: input.situation.actualLead
+        passCount:
+          $ref: input.situation.passCount
+        followingTeammate:
+          $ref: input.situation.followingTeammate
+        teammateLeadUnbeatable:
+          $ref: input.situation.teammateLeadUnbeatable
+        currentEnemyResponses:
+          $ref: input.situation.currentEnemyResponses
+        minimumEnemyCount:
+          $ref: input.situation.minimumEnemyCount
+        lastPlay:
+          $ref: input.situation.lastPlay
+        ownRankCounts:
+          $ref: input.situation.ownRankCounts
+        publicLedger:
+          $ref: input.situation.publicLedger
+        handRoutes:
+          $ref: input.situation.handRoutes
+        publicProgress:
+          $ref: input.situation.publicProgress
+        routeTradeoffs:
+          $ref: input.situation.routeTradeoffs
+        routeSummary:
+          $ref: input.situation.routeSummary
+        interpretation:
+          $ref: input.situation.interpretation
+        passConsequence:
+          $ref: input.situation.passConsequence
+      candidateEvidenceColumns:
+        $ref: input.jevDecisionColumns
+      goalJudgment:
+        $ref: nodes.assess.goal_compare.decision
+      costJudgment:
+        $ref: nodes.upstream_cost_compare.budget
+      policy:
+        core:
+          $ref: input.strategies.core
+        general:
+          $ref: input.strategies.general
+        weak:
+          $ref: input.strategies.weak
+        control:
+          $ref: input.strategies.control
+        cooperation:
+          $ref: input.strategies.cooperation
+        endgame:
+          $ref: input.strategies.endgame
+        attachments:
+          $ref: input.strategies.attachments
+    criteria:
+      $ref: nodes.upstream_structure_candidates.criteria
+    instructions: 仅在已批准的候选内比较完整路线、确定收尾和团队接力。优先合法立即出完；比较本次能否继续取得出手机会，不机械保留控制组合、不固定最小点数或最多张数。 每个候选显式给出收尾证据和余牌点数。对结构相同、推进手数相近的候选，比较是否带走原有弱单而保留独立对子；不要因本次张数更多就带走高对子留下小单。这些是取舍依据，由你判断，不是程序排序或禁令。
+    batch_size: 255
+    next: upstream_structure_result
+  upstream_structure_result:
+    type: return
+    title: 地主上家：返回路线推进动作
+    value:
+      candidate:
+        $ref: nodes.upstream_structure_choice.choice
+      source: flow
+      plan:
+        role:
+          $ref: input.role
+        tactic: structure
+        goalJudgment:
+          $ref: nodes.assess.goal_compare.decision
+        costJudgment:
+          $ref: nodes.upstream_cost_compare.budget
+        routeRole: upstream
+      inputCount:
+        $ref: input.candidateCount
+      candidateCount:
+        $ref: nodes.upstream_structure_choice.count
+  upstream_pass_candidates:
+    type: filter
+    title: 地主上家：仅落实 Jev 批准的候选范围
+    items:
+      $ref: input.jevDecisionCandidates
+    where:
+    - field: costProfile
+      op: eq
+      value:
+        $ref: nodes.upstream_cost_compare.budget.choice
+    next: upstream_pass_choice
+  upstream_pass_choice:
+    type: select
+    title: 地主上家：Jev 在批准范围内判断明确不要
+    state:
+      role:
+        $ref: input.role
+      rolePolicy:
+        $ref: input.rolePolicy
+      situation:
+        role:
+          $ref: input.situation.role
+        roleContext:
+          $ref: input.situation.roleContext
+        counts:
+          $ref: input.situation.counts
+        actualLead:
+          $ref: input.situation.actualLead
+        passCount:
+          $ref: input.situation.passCount
+        followingTeammate:
+          $ref: input.situation.followingTeammate
+        teammateLeadUnbeatable:
+          $ref: input.situation.teammateLeadUnbeatable
+        currentEnemyResponses:
+          $ref: input.situation.currentEnemyResponses
+        minimumEnemyCount:
+          $ref: input.situation.minimumEnemyCount
+        lastPlay:
+          $ref: input.situation.lastPlay
+        ownRankCounts:
+          $ref: input.situation.ownRankCounts
+        publicLedger:
+          $ref: input.situation.publicLedger
+        handRoutes:
+          $ref: input.situation.handRoutes
+        publicProgress:
+          $ref: input.situation.publicProgress
+        routeTradeoffs:
+          $ref: input.situation.routeTradeoffs
+        routeSummary:
+          $ref: input.situation.routeSummary
+        interpretation:
+          $ref: input.situation.interpretation
+        passConsequence:
+          $ref: input.situation.passConsequence
+      candidateEvidenceColumns:
+        $ref: input.jevDecisionColumns
+      goalJudgment:
+        $ref: nodes.assess.goal_compare.decision
+      costJudgment:
+        $ref: nodes.upstream_cost_compare.budget
+      policy:
+        core:
+          $ref: input.strategies.core
+        general:
+          $ref: input.strategies.general
+        weak:
+          $ref: input.strategies.weak
+        control:
+          $ref: input.strategies.control
+        cooperation:
+          $ref: input.strategies.cooperation
+        endgame:
+          $ref: input.strategies.endgame
+        attachments:
+          $ref: input.strategies.attachments
+    criteria:
+      $ref: nodes.upstream_pass_candidates.criteria
+    instructions: 只处理上游已经明确批准的不要候选，不恢复任何被排除动作。 每个候选显式给出收尾证据和余牌点数。对结构相同、推进手数相近的候选，比较是否带走原有弱单而保留独立对子；不要因本次张数更多就带走高对子留下小单。这些是取舍依据，由你判断，不是程序排序或禁令。
+    batch_size: 255
+    next: upstream_pass_result
+  upstream_pass_result:
+    type: return
+    title: 地主上家：返回明确让牌
+    value:
+      candidate:
+        $ref: nodes.upstream_pass_choice.choice
+      source: flow
+      plan:
+        role:
+          $ref: input.role
+        tactic: hold
+        goalJudgment:
+          $ref: nodes.assess.goal_compare.decision
+        costJudgment:
+          $ref: nodes.upstream_cost_compare.budget
+        routeRole: upstream
+      inputCount:
+        $ref: input.candidateCount
+      candidateCount:
+        $ref: nodes.upstream_pass_choice.count
+  downstream_cost_compare:
+    type: evaluate
+    title: 地主下家：收益是否值得付出代价
+    state:
+      role:
+        $ref: input.role
+      rolePolicy:
+        $ref: input.rolePolicy
+      situation:
+        role:
+          $ref: input.situation.role
+        roleContext:
+          $ref: input.situation.roleContext
+        counts:
+          $ref: input.situation.counts
+        actualLead:
+          $ref: input.situation.actualLead
+        passCount:
+          $ref: input.situation.passCount
+        followingTeammate:
+          $ref: input.situation.followingTeammate
+        teammateLeadUnbeatable:
+          $ref: input.situation.teammateLeadUnbeatable
+        currentEnemyResponses:
+          $ref: input.situation.currentEnemyResponses
+        minimumEnemyCount:
+          $ref: input.situation.minimumEnemyCount
+        lastPlay:
+          $ref: input.situation.lastPlay
+        ownRankCounts:
+          $ref: input.situation.ownRankCounts
+        publicLedger:
+          $ref: input.situation.publicLedger
+        handRoutes:
+          $ref: input.situation.handRoutes
+        publicProgress:
+          $ref: input.situation.publicProgress
+        routeTradeoffs:
+          $ref: input.situation.routeTradeoffs
+        routeSummary:
+          $ref: input.situation.routeSummary
+        interpretation:
+          $ref: input.situation.interpretation
+        passConsequence:
+          $ref: input.situation.passConsequence
+      policy:
+        core:
+          $ref: input.strategies.core
+        attachments:
+          $ref: input.strategies.attachments
+        weak:
+          $ref: input.strategies.weak
+        control:
+          $ref: input.strategies.control
+        cooperation:
+          $ref: input.strategies.cooperation
+        endgame:
+          $ref: input.strategies.endgame
+        general:
+          $ref: input.strategies.general
+      previousJudgment:
+        $ref: nodes.assess.goal_compare.decision
+      scope: 所有实际代价组均提供，无支配或风险预筛。根据本身份目标、完整路线和不要后果批准一组代价；下一节点只能在批准范围内选择动作。
+      availableCostProfiles:
+        $ref: input.jevCostProfiles
+      positionTask: 接地主牌若要拆长组合或使用高控，比较接住后的余牌路线与被压回的代价。队友领先时比较继续让其推进与有具体收益的接管，不能机械连番加压。
+      legalActionCount:
+        $ref: input.candidateCount
+      finishEvidence:
+        $ref: input.finishEvidence
+    questions:
+      budget:
+        type: choice
+        instructions: 接地主牌若要拆长组合或使用高控，比较接住后的余牌路线与被压回的代价。队友领先时比较继续让其推进与有具体收益的接管，不能机械连番加压。 选择当前收益值得承担的一组实际代价，或明确不要。遵守：阻止敌方即将出完
+          > 改善本方路线 > 同等收益保结构和控制。普通跟牌若必须拆长组合、炸弹或耗唯一高控而收益不足，可选 hold；不能为保牌放任敌手下一手出完。必要拦截允许增加拆分手数、消耗高牌或炸弹；对手“可能一手响应”是风险而非确定失败，须与不要的风险比较，不能一票否决。己方领牌不能不要；没有低成本组合时比较实际可行路线，不要求零代价。队友领先仍按座次检查让牌后果。若多组都能完成目标，优先代价更小者；此前目标只是倾向，若证据显示接牌不值，可明确改选
+          hold。不要把组合内某一项最优值当作同一动作的全部属性；无法作出有依据的取舍才选 unresolved。 组合未被程序预先判为安全；保留双王、确定收尾、必要拦截及不要风险均由你综合判断，不把输入风险事实当成程序禁令。 先比较各组
+          outcomes 所说明的实际获胜收益，再比较资源代价；零消耗不是目标本身。无法保证最终获胜不等于证据不足。若唯一合法动作是不要，它仍是本轮合法响应，即使局面不利；unresolved 仅表示输入矛盾或无法解释的证据缺失。
+        criteria:
+          $ref: input.jevCostProfiles
+    next: downstream_resolve
+  downstream_resolve:
+    type: branch
+    title: 地主下家：按 Jev 目标与代价答案流转
+    cases:
+    - left:
+        $ref: nodes.downstream_cost_compare.budget.choice
+      op: eq
+      right: unresolved
+      next: unresolved
+    - left:
+        $ref: nodes.downstream_cost_compare.budget.choice
+      op: eq
+      right: hold
+      next: downstream_pass_candidates
+    - left:
+        $ref: nodes.assess.goal_compare.decision.choice
+      op: eq
+      right: control
+      next: downstream_control_candidates
+    default: downstream_structure_candidates
+  downstream_control_candidates:
+    type: filter
+    title: 地主下家：仅落实 Jev 批准的候选范围
+    items:
+      $ref: input.jevDecisionCandidates
+    where:
+    - field: costProfile
+      op: eq
+      value:
+        $ref: nodes.downstream_cost_compare.budget.choice
+    next: downstream_control_choice
+  downstream_control_choice:
+    type: select
+    title: 地主下家：Jev 在批准范围内判断有效拦截与牌权
+    state:
+      role:
+        $ref: input.role
+      rolePolicy:
+        $ref: input.rolePolicy
+      situation:
+        role:
+          $ref: input.situation.role
+        roleContext:
+          $ref: input.situation.roleContext
+        counts:
+          $ref: input.situation.counts
+        actualLead:
+          $ref: input.situation.actualLead
+        passCount:
+          $ref: input.situation.passCount
+        followingTeammate:
+          $ref: input.situation.followingTeammate
+        teammateLeadUnbeatable:
+          $ref: input.situation.teammateLeadUnbeatable
+        currentEnemyResponses:
+          $ref: input.situation.currentEnemyResponses
+        minimumEnemyCount:
+          $ref: input.situation.minimumEnemyCount
+        lastPlay:
+          $ref: input.situation.lastPlay
+        ownRankCounts:
+          $ref: input.situation.ownRankCounts
+        publicLedger:
+          $ref: input.situation.publicLedger
+        handRoutes:
+          $ref: input.situation.handRoutes
+        publicProgress:
+          $ref: input.situation.publicProgress
+        routeTradeoffs:
+          $ref: input.situation.routeTradeoffs
+        routeSummary:
+          $ref: input.situation.routeSummary
+        interpretation:
+          $ref: input.situation.interpretation
+        passConsequence:
+          $ref: input.situation.passConsequence
+      candidateEvidenceColumns:
+        $ref: input.jevDecisionColumns
+      goalJudgment:
+        $ref: nodes.assess.goal_compare.decision
+      costJudgment:
+        $ref: nodes.downstream_cost_compare.budget
+      policy:
+        core:
+          $ref: input.strategies.core
+        general:
+          $ref: input.strategies.general
+        weak:
+          $ref: input.strategies.weak
+        control:
+          $ref: input.strategies.control
+        cooperation:
+          $ref: input.strategies.cooperation
+        endgame:
+          $ref: input.strategies.endgame
+        attachments:
+          $ref: input.strategies.attachments
+    criteria:
+      $ref: nodes.downstream_control_candidates.criteria
+    instructions: 仅在已批准的候选内判断哪条响应路线有实际拦截或接管收益。比较接住后余牌、被压后恢复能力与团队收益；能压过不等于值得消耗高控。 每个候选显式给出收尾证据和余牌点数。对结构相同、推进手数相近的候选，比较是否带走原有弱单而保留独立对子；不要因本次张数更多就带走高对子留下小单。这些是取舍依据，由你判断，不是程序排序或禁令。
+    batch_size: 255
+    next: downstream_control_result
+  downstream_control_result:
+    type: return
+    title: 地主下家：返回拦截／牌权动作
+    value:
+      candidate:
+        $ref: nodes.downstream_control_choice.choice
+      source: flow
+      plan:
+        role:
+          $ref: input.role
+        tactic: control
+        goalJudgment:
+          $ref: nodes.assess.goal_compare.decision
+        costJudgment:
+          $ref: nodes.downstream_cost_compare.budget
+        routeRole: downstream
+      inputCount:
+        $ref: input.candidateCount
+      candidateCount:
+        $ref: nodes.downstream_control_choice.count
+  downstream_structure_candidates:
+    type: filter
+    title: 地主下家：仅落实 Jev 批准的候选范围
+    items:
+      $ref: input.jevDecisionCandidates
+    where:
+    - field: costProfile
+      op: eq
+      value:
+        $ref: nodes.downstream_cost_compare.budget.choice
+    next: downstream_structure_choice
+  downstream_structure_choice:
+    type: select
+    title: 地主下家：Jev 在批准范围内判断完整路线与收尾
+    state:
+      role:
+        $ref: input.role
+      rolePolicy:
+        $ref: input.rolePolicy
+      situation:
+        role:
+          $ref: input.situation.role
+        roleContext:
+          $ref: input.situation.roleContext
+        counts:
+          $ref: input.situation.counts
+        actualLead:
+          $ref: input.situation.actualLead
+        passCount:
+          $ref: input.situation.passCount
+        followingTeammate:
+          $ref: input.situation.followingTeammate
+        teammateLeadUnbeatable:
+          $ref: input.situation.teammateLeadUnbeatable
+        currentEnemyResponses:
+          $ref: input.situation.currentEnemyResponses
+        minimumEnemyCount:
+          $ref: input.situation.minimumEnemyCount
+        lastPlay:
+          $ref: input.situation.lastPlay
+        ownRankCounts:
+          $ref: input.situation.ownRankCounts
+        publicLedger:
+          $ref: input.situation.publicLedger
+        handRoutes:
+          $ref: input.situation.handRoutes
+        publicProgress:
+          $ref: input.situation.publicProgress
+        routeTradeoffs:
+          $ref: input.situation.routeTradeoffs
+        routeSummary:
+          $ref: input.situation.routeSummary
+        interpretation:
+          $ref: input.situation.interpretation
+        passConsequence:
+          $ref: input.situation.passConsequence
+      candidateEvidenceColumns:
+        $ref: input.jevDecisionColumns
+      goalJudgment:
+        $ref: nodes.assess.goal_compare.decision
+      costJudgment:
+        $ref: nodes.downstream_cost_compare.budget
+      policy:
+        core:
+          $ref: input.strategies.core
+        general:
+          $ref: input.strategies.general
+        weak:
+          $ref: input.strategies.weak
+        control:
+          $ref: input.strategies.control
+        cooperation:
+          $ref: input.strategies.cooperation
+        endgame:
+          $ref: input.strategies.endgame
+        attachments:
+          $ref: input.strategies.attachments
+    criteria:
+      $ref: nodes.downstream_structure_candidates.criteria
+    instructions: 仅在已批准的候选内比较完整路线、确定收尾和团队接力。优先合法立即出完；比较本次能否继续取得出手机会，不机械保留控制组合、不固定最小点数或最多张数。 每个候选显式给出收尾证据和余牌点数。对结构相同、推进手数相近的候选，比较是否带走原有弱单而保留独立对子；不要因本次张数更多就带走高对子留下小单。这些是取舍依据，由你判断，不是程序排序或禁令。
+    batch_size: 255
+    next: downstream_structure_result
+  downstream_structure_result:
+    type: return
+    title: 地主下家：返回路线推进动作
+    value:
+      candidate:
+        $ref: nodes.downstream_structure_choice.choice
+      source: flow
+      plan:
+        role:
+          $ref: input.role
+        tactic: structure
+        goalJudgment:
+          $ref: nodes.assess.goal_compare.decision
+        costJudgment:
+          $ref: nodes.downstream_cost_compare.budget
+        routeRole: downstream
+      inputCount:
+        $ref: input.candidateCount
+      candidateCount:
+        $ref: nodes.downstream_structure_choice.count
+  downstream_pass_candidates:
+    type: filter
+    title: 地主下家：仅落实 Jev 批准的候选范围
+    items:
+      $ref: input.jevDecisionCandidates
+    where:
+    - field: costProfile
+      op: eq
+      value:
+        $ref: nodes.downstream_cost_compare.budget.choice
+    next: downstream_pass_choice
+  downstream_pass_choice:
+    type: select
+    title: 地主下家：Jev 在批准范围内判断明确不要
+    state:
+      role:
+        $ref: input.role
+      rolePolicy:
+        $ref: input.rolePolicy
+      situation:
+        role:
+          $ref: input.situation.role
+        roleContext:
+          $ref: input.situation.roleContext
+        counts:
+          $ref: input.situation.counts
+        actualLead:
+          $ref: input.situation.actualLead
+        passCount:
+          $ref: input.situation.passCount
+        followingTeammate:
+          $ref: input.situation.followingTeammate
+        teammateLeadUnbeatable:
+          $ref: input.situation.teammateLeadUnbeatable
+        currentEnemyResponses:
+          $ref: input.situation.currentEnemyResponses
+        minimumEnemyCount:
+          $ref: input.situation.minimumEnemyCount
+        lastPlay:
+          $ref: input.situation.lastPlay
+        ownRankCounts:
+          $ref: input.situation.ownRankCounts
+        publicLedger:
+          $ref: input.situation.publicLedger
+        handRoutes:
+          $ref: input.situation.handRoutes
+        publicProgress:
+          $ref: input.situation.publicProgress
+        routeTradeoffs:
+          $ref: input.situation.routeTradeoffs
+        routeSummary:
+          $ref: input.situation.routeSummary
+        interpretation:
+          $ref: input.situation.interpretation
+        passConsequence:
+          $ref: input.situation.passConsequence
+      candidateEvidenceColumns:
+        $ref: input.jevDecisionColumns
+      goalJudgment:
+        $ref: nodes.assess.goal_compare.decision
+      costJudgment:
+        $ref: nodes.downstream_cost_compare.budget
+      policy:
+        core:
+          $ref: input.strategies.core
+        general:
+          $ref: input.strategies.general
+        weak:
+          $ref: input.strategies.weak
+        control:
+          $ref: input.strategies.control
+        cooperation:
+          $ref: input.strategies.cooperation
+        endgame:
+          $ref: input.strategies.endgame
+        attachments:
+          $ref: input.strategies.attachments
+    criteria:
+      $ref: nodes.downstream_pass_candidates.criteria
+    instructions: 只处理上游已经明确批准的不要候选，不恢复任何被排除动作。 每个候选显式给出收尾证据和余牌点数。对结构相同、推进手数相近的候选，比较是否带走原有弱单而保留独立对子；不要因本次张数更多就带走高对子留下小单。这些是取舍依据，由你判断，不是程序排序或禁令。
+    batch_size: 255
+    next: downstream_pass_result
+  downstream_pass_result:
+    type: return
+    title: 地主下家：返回明确让牌
+    value:
+      candidate:
+        $ref: nodes.downstream_pass_choice.choice
+      source: flow
+      plan:
+        role:
+          $ref: input.role
+        tactic: hold
+        goalJudgment:
+          $ref: nodes.assess.goal_compare.decision
+        costJudgment:
+          $ref: nodes.downstream_cost_compare.budget
+        routeRole: downstream
+      inputCount:
+        $ref: input.candidateCount
+      candidateCount:
+        $ref: nodes.downstream_pass_choice.count
+  unresolved:
+    type: return
+    title: 返回未解决：不恢复被拒绝候选
+    value:
+      status: needs_agent_review
+      source: flow
+      reason: 明确选择未解决或身份无法路由；不自动过牌或恢复候选。
+  immediate_candidates:
+    type: filter
+    title: 落实 Jev 批准的本手出完范围
+    items:
+      $ref: input.jevDecisionCandidates
+    where:
+    - field: finishesNow
+      op: eq
+      value: true
+    next: immediate_choice
+  immediate_choice:
+    type: select
+    title: Jev：在本手出完路线中选择
+    state:
+      role:
+        $ref: input.role
+      rolePolicy:
+        $ref: input.rolePolicy
+      approvedResolution:
+        $ref: nodes.assess.entry_judgment.resolution
+      finishEvidence:
+        $ref: input.finishEvidence
+      candidateEvidenceColumns:
+        $ref: input.jevDecisionColumns
+    criteria:
+      $ref: nodes.immediate_candidates.criteria
+    instructions: 只在此前 Jev 批准的确定获胜路线中比较并选择。此处只含对应证据的候选；不重新考虑普通保牌或让牌，不恢复其他动作。若多项同样能赢，比较合法收尾路线的直接性。
+    batch_size: 255
+    next: immediate_result
+  immediate_result:
+    type: return
+    value:
+      candidate:
+        $ref: nodes.immediate_choice.choice
+      source: flow
+      plan:
+        role:
+          $ref: input.role
+        tactic: immediate
+        resolutionJudgment:
+          $ref: nodes.assess.entry_judgment.resolution
+        routeRole:
+          $ref: nodes.assess.entry_judgment.route.choice
+      inputCount:
+        $ref: input.candidateCount
+      candidateCount:
+        $ref: nodes.immediate_choice.count
+  sequence_candidates:
+    type: filter
+    title: 落实 Jev 批准的公开证明的连续收尾范围
+    items:
+      $ref: input.jevDecisionCandidates
+    where:
+    - field: certifiedFinish
+      op: eq
+      value: true
+    next: sequence_choice
+  sequence_choice:
+    type: select
+    title: Jev：在公开证明的连续收尾路线中选择
+    state:
+      role:
+        $ref: input.role
+      rolePolicy:
+        $ref: input.rolePolicy
+      approvedResolution:
+        $ref: nodes.assess.entry_judgment.resolution
+      finishEvidence:
+        $ref: input.finishEvidence
+      candidateEvidenceColumns:
+        $ref: input.jevDecisionColumns
+    criteria:
+      $ref: nodes.sequence_candidates.criteria
+    instructions: 只在此前 Jev 批准的确定获胜路线中比较并选择。此处只含对应证据的候选；不重新考虑普通保牌或让牌，不恢复其他动作。若多项同样能赢，比较合法收尾路线的直接性。
+    batch_size: 255
+    next: sequence_result
+  sequence_result:
+    type: return
+    value:
+      candidate:
+        $ref: nodes.sequence_choice.choice
+      source: flow
+      plan:
+        role:
+          $ref: input.role
+        tactic: sequence
+        resolutionJudgment:
+          $ref: nodes.assess.entry_judgment.resolution
+        routeRole:
+          $ref: nodes.assess.entry_judgment.route.choice
+      inputCount:
+        $ref: input.candidateCount
+      candidateCount:
+        $ref: nodes.sequence_choice.count
+  team_candidates:
+    type: filter
+    title: 落实 Jev 批准的队友确定收尾范围
+    items:
+      $ref: input.jevDecisionCandidates
+    where:
+    - field: teamFinishPass
+      op: eq
+      value: true
+    next: team_choice
+  team_choice:
+    type: select
+    title: Jev：在队友确定收尾路线中选择
+    state:
+      role:
+        $ref: input.role
+      rolePolicy:
+        $ref: input.rolePolicy
+      approvedResolution:
+        $ref: nodes.assess.entry_judgment.resolution
+      finishEvidence:
+        $ref: input.finishEvidence
+      candidateEvidenceColumns:
+        $ref: input.jevDecisionColumns
+    criteria:
+      $ref: nodes.team_candidates.criteria
+    instructions: 只在此前 Jev 批准的确定获胜路线中比较并选择。此处只含对应证据的候选；不重新考虑普通保牌或让牌，不恢复其他动作。若多项同样能赢，比较合法收尾路线的直接性。
+    batch_size: 255
+    next: team_result
+  team_result:
+    type: return
+    value:
+      candidate:
+        $ref: nodes.team_choice.choice
+      source: flow
+      plan:
+        role:
+          $ref: input.role
+        tactic: team
+        resolutionJudgment:
+          $ref: nodes.assess.entry_judgment.resolution
+        routeRole:
+          $ref: nodes.assess.entry_judgment.route.choice
+      inputCount:
+        $ref: input.candidateCount
+      candidateCount:
+        $ref: nodes.team_choice.count
